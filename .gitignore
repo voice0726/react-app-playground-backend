@@ -1,0 +1,6 @@
+.env
+*.local
+coverage.out
+test-results/
+storage-state/
+bin/
