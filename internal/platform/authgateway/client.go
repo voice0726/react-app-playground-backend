@@ -28,7 +28,7 @@ func (c *Client) GetSession(ctx context.Context, cookie string) (requestuser.Aut
 	if cookie == "" {
 		return requestuser.AuthenticatedUser{}, httperror.New(httperror.Unauthenticated, "unauthenticated", "Authentication required.", nil)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/internal/session", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/internal/react-app-playground/session", nil)
 	if err != nil {
 		return requestuser.AuthenticatedUser{}, httperror.New(httperror.AuthGatewayUnavailable, "auth_gateway_unavailable", "Authentication service unavailable.", err)
 	}

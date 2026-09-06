@@ -19,3 +19,11 @@ Migration は `make migrate-up`、`make migrate-down`（直前の1件のみ）�
 ## API
 
 `/healthz`、`/readyz` と、現在 frontend が利用する customers / deals / invoices / tasks の endpoint だけを提供します。projects API、業務データの server-side pagination、OpenAPI、Kubernetes 配置は含みません。
+
+## アプリ別の認証接続
+
+このバックエンドはgatewayの `/internal/react-app-playground/session` を呼びます。`AUTH_GATEWAY_INTERNAL_TOKEN` はgatewayの `applications` 内の `react-app-playground` の `internal_token` と一致させてください。他アプリのトークンは使用できません。
+
+開発用フロントのURLは `http://react.localtest.me:5174` です。`PUBLIC_ORIGIN` も同じ値にします。gatewayの接続先は `http://localhost:8800` です。業務DBの変更やmigrationは今回の接続先変更には不要です。
+
+開発時の `SERVER_ADDR` は `:18080` です。ZITADELが使用するホスト側ポート `8080` との競合を避けます。
