@@ -3,9 +3,12 @@ package invoice
 import (
 	"context"
 	"errors"
+
 	"github.com/google/uuid"
 	"github.com/voice0726/react-app-playground-backend/internal/customer"
 	"github.com/voice0726/react-app-playground-backend/internal/shared/httperror"
+	"github.com/voice0726/react-app-playground-backend/internal/shared/orgcontext"
+	"time"
 )
 
 type Service struct {
@@ -13,28 +16,30 @@ type Service struct {
 	finder customer.CustomerFinder
 }
 
-func NewService(r Repository, f customer.CustomerFinder) *Service      { return &Service{r, f} }
-func (s *Service) List(c context.Context, u string) ([]Invoice, error) { return s.repo.List(c, u) }
-func (s *Service) Find(c context.Context, u string, id uuid.UUID) (Invoice, error) {
-	return s.repo.Find(c, u, id)
+func NewService(r Repository, f customer.CustomerFinder) *Service { return &Service{r, f} }
+func (s *Service) List(c context.Context, scope orgcontext.Scope, options ListOptions) ([]Invoice, int64, int64, error) {
+	return s.repo.List(c, scope.OrganizationID, options)
 }
-func (s *Service) Create(c context.Context, u string, r CreateRequest) (Invoice, error) {
+func (s *Service) Find(c context.Context, scope orgcontext.Scope, id uuid.UUID) (Invoice, error) {
+	return s.repo.Find(c, scope.OrganizationID, id)
+}
+func (s *Service) Create(c context.Context, scope orgcontext.Scope, r CreateRequest) (Invoice, error) {
 	if e := r.Validate(); e != nil {
 		return Invoice{}, httperror.New(httperror.Validation, "invoice_validation", "Invalid invoice.", e)
 	}
 	cid, _ := uuid.Parse(r.CustomerID)
-	if _, e := s.finder.Find(c, u, cid); e != nil {
+	if _, e := s.finder.FindByOrganization(c, scope.OrganizationID, cid); e != nil {
 		return Invoice{}, e
 	}
 	a, _ := date(r.IssueDate)
 	b, _ := date(r.DueDate)
-	return s.repo.Create(c, u, Invoice{CustomerID: cid, Number: r.Number, Amount: r.Amount, IssueDate: a, DueDate: b, Status: r.Status})
+	return s.repo.Create(c, scope.OrganizationID, scope.UserID, Invoice{CustomerID: cid, Number: r.Number, Amount: r.Amount, IssueDate: a, DueDate: b, Status: r.Status})
 }
-func (s *Service) Update(c context.Context, u string, id uuid.UUID, r UpdateRequest) (Invoice, error) {
+func (s *Service) Update(c context.Context, scope orgcontext.Scope, id uuid.UUID, r UpdateRequest) (Invoice, error) {
 	if e := r.Validate(); e != nil {
 		return Invoice{}, httperror.New(httperror.Validation, "invoice_validation", "Invalid invoice.", e)
 	}
-	return s.repo.UpdateLocked(c, u, id, func(cur Invoice) (Invoice, error) {
+	return s.repo.UpdateLocked(c, scope.OrganizationID, id, func(cur Invoice) (Invoice, error) {
 		if r.Status != nil {
 			if e := CanTransition(cur.Status, *r.Status); e != nil {
 				return cur, e
@@ -49,7 +54,7 @@ func (s *Service) Update(c context.Context, u string, id uuid.UUID, r UpdateRequ
 		}
 		if r.CustomerID != nil {
 			x, _ := uuid.Parse(*r.CustomerID)
-			if _, e := s.finder.Find(c, u, x); e != nil {
+			if _, e := s.finder.FindByOrganization(c, scope.OrganizationID, x); e != nil {
 				return cur, e
 			}
 			cur.CustomerID = x
@@ -67,4 +72,8 @@ func (s *Service) Update(c context.Context, u string, id uuid.UUID, r UpdateRequ
 		}
 		return cur, nil
 	})
+}
+
+func (s *Service) Summary(c context.Context, scope orgcontext.Scope, today time.Time, customerID *uuid.UUID) (Summary, error) {
+	return s.repo.Summary(c, scope.OrganizationID, today, customerID)
 }

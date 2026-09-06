@@ -15,19 +15,19 @@ import (
 
 type constraintCustomerRepository struct{}
 
-func (constraintCustomerRepository) List(context.Context, string) ([]customer.Customer, error) {
-	return nil, nil
+func (constraintCustomerRepository) List(context.Context, uuid.UUID, customer.ListOptions) ([]customer.Customer, int64, error) {
+	return nil, 0, nil
 }
-func (constraintCustomerRepository) Find(context.Context, string, uuid.UUID) (customer.Customer, error) {
+func (constraintCustomerRepository) Find(context.Context, uuid.UUID, uuid.UUID) (customer.Customer, error) {
 	return customer.Customer{}, httperror.New(httperror.NotFound, "customer_not_found", "Customer not found.", nil)
 }
-func (constraintCustomerRepository) Create(context.Context, string, customer.Customer) (customer.Customer, error) {
+func (constraintCustomerRepository) Create(context.Context, uuid.UUID, string, customer.Customer) (customer.Customer, error) {
 	return customer.Customer{}, nil
 }
-func (constraintCustomerRepository) Update(context.Context, string, uuid.UUID, customer.UpdatePatch) (customer.Customer, error) {
+func (constraintCustomerRepository) Update(context.Context, uuid.UUID, uuid.UUID, customer.UpdatePatch) (customer.Customer, error) {
 	return customer.Customer{}, nil
 }
-func (constraintCustomerRepository) Delete(context.Context, string, uuid.UUID) error {
+func (constraintCustomerRepository) Delete(context.Context, uuid.UUID, uuid.UUID) error {
 	return dberror.Classify(&pgconn.PgError{Code: "23503", Message: "referenced customer"})
 }
 
@@ -36,6 +36,7 @@ func TestClassifiedCustomerDeleteConstraintIsHTTP409(t *testing.T) {
 	s.Register(customer.NewHandler(customer.NewService(constraintCustomerRepository{})))
 	req := httptest.NewRequest(http.MethodDelete, "/api/customers/"+uuid.NewString(), nil)
 	req.Header.Set("Cookie", "session=component")
+	req.Header.Set("X-Organization-ID", componentOrganizationID.String())
 	req.Header.Set("Origin", "http://localhost:5173")
 	res := httptest.NewRecorder()
 	s.Echo.ServeHTTP(res, req)

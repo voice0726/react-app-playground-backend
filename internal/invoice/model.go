@@ -6,16 +6,24 @@ import (
 )
 
 type Invoice struct {
-	ID          uuid.UUID `gorm:"type:uuid;primaryKey"`
-	OwnerUserID string
-	CustomerID  uuid.UUID
-	Number      string
-	Amount      int64
-	IssueDate   time.Time
-	DueDate     time.Time
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID             uuid.UUID `gorm:"type:uuid;primaryKey"`
+	OrganizationID uuid.UUID `gorm:"type:uuid;not null;index"`
+	OwnerUserID    string
+	CustomerID     uuid.UUID
+	Number         string
+	Amount         int64
+	IssueDate      time.Time
+	DueDate        time.Time
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type Summary struct {
+	DraftCount        int64 `json:"draftCount"`
+	OutstandingAmount int64 `json:"outstandingAmount"`
+	OverdueCount      int64 `json:"overdueCount"`
+	OverdueAmount     int64 `json:"overdueAmount"`
 }
 
 func (Invoice) TableName() string { return "invoices" }

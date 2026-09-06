@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
 	"github.com/voice0726/react-app-playground-backend/internal/config"
 	"github.com/voice0726/react-app-playground-backend/internal/platform/authgateway"
 	"github.com/voice0726/react-app-playground-backend/internal/shared/httperror"
+	"github.com/voice0726/react-app-playground-backend/internal/shared/orgcontext"
 	"github.com/voice0726/react-app-playground-backend/internal/shared/requestuser"
 	"gorm.io/gorm"
 )
@@ -22,24 +24,72 @@ type Server struct {
 	db   *gorm.DB
 	log  *slog.Logger
 	auth *authgateway.Client
+	org  OrganizationAuthorizer
 	http *http.Server
 }
 type RouteRegistrar interface{ Register(*echo.Group) }
+type ScopedRouteRegistrar interface{ RegisterScoped(*echo.Group) }
 
-func New(cfg config.Config, db *gorm.DB, log *slog.Logger, auth *authgateway.Client) *Server {
+type OrganizationAuthorizer interface {
+	Role(context.Context, string, uuid.UUID) (string, error)
+}
+
+func New(cfg config.Config, db *gorm.DB, log *slog.Logger, auth *authgateway.Client, authorizers ...OrganizationAuthorizer) *Server {
 	e := echo.New()
 	e.Logger = log
 	e.HTTPErrorHandler = errorHandler
 	e.Use(middleware.RequestID())
 	e.Use(middleware.Recover())
-	s := &Server{Echo: e, cfg: cfg, db: db, log: log, auth: auth, http: &http.Server{Addr: cfg.ServerAddr, Handler: e}}
+	var authorizer OrganizationAuthorizer
+	if len(authorizers) > 0 {
+		authorizer = authorizers[0]
+	}
+	s := &Server{Echo: e, cfg: cfg, db: db, log: log, auth: auth, org: authorizer, http: &http.Server{Addr: cfg.ServerAddr, Handler: e}}
 	registerHealth(e, db)
 	return s
 }
 func (s *Server) Register(registrars ...RouteRegistrar) {
 	api := s.Echo.Group("/api", s.auth.EchoMiddleware, echo.WrapMiddleware(OriginGuard(s.cfg)))
+	scoped := api.Group("", s.organizationMiddleware)
 	for _, registrar := range registrars {
+		if scopedRegistrar, ok := registrar.(ScopedRouteRegistrar); ok {
+			scopedRegistrar.RegisterScoped(scoped)
+			continue
+		}
 		registrar.Register(api)
+	}
+}
+
+func (s *Server) organizationMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c *echo.Context) error {
+		user, err := requestuser.From(c.Request().Context())
+		if err != nil {
+			return httperror.New(httperror.Unauthenticated, "unauthenticated", "Authentication required.", err)
+		}
+		rawID := c.Request().Header.Get("X-Organization-ID")
+		if rawID == "" {
+			return httperror.New(httperror.Validation, "organization_required", "X-Organization-ID is required.", nil)
+		}
+		organizationID, err := uuid.Parse(rawID)
+		if err != nil {
+			return httperror.New(httperror.Validation, "invalid_organization_id", "Invalid organization ID.", nil)
+		}
+		if s.org == nil {
+			return httperror.New(httperror.Internal, "organization_access_unavailable", "Organization access is unavailable.", nil)
+		}
+		role, err := s.org.Role(c.Request().Context(), user.ID, organizationID)
+		if err != nil {
+			return err
+		}
+		if role != "admin" && role != "editor" && role != "viewer" {
+			return httperror.New(httperror.Internal, "organization_access_invalid", "Organization access is invalid.", nil)
+		}
+		if role == "viewer" && c.Request().Method != http.MethodGet && c.Request().Method != http.MethodHead && c.Request().Method != http.MethodOptions {
+			return httperror.New(httperror.Forbidden, "organization_write_forbidden", "Viewer permission cannot modify organization data.", nil)
+		}
+		ctx := orgcontext.With(c.Request().Context(), orgcontext.Scope{OrganizationID: organizationID, UserID: user.ID, Role: role})
+		c.SetRequest(c.Request().WithContext(ctx))
+		return next(c)
 	}
 }
 func (s *Server) Start(ctx context.Context) error {

@@ -6,14 +6,15 @@ import (
 )
 
 type Deal struct {
-	ID          uuid.UUID `gorm:"type:uuid;primaryKey"`
-	OwnerUserID string
-	CustomerID  uuid.UUID
-	Title       string
-	Amount      int64
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID             uuid.UUID `gorm:"type:uuid;primaryKey"`
+	OrganizationID uuid.UUID `gorm:"type:uuid;not null;index"`
+	OwnerUserID    string
+	CustomerID     uuid.UUID
+	Title          string
+	Amount         int64
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 func (Deal) TableName() string { return "deals" }
