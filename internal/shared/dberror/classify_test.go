@@ -9,7 +9,7 @@ import (
 )
 
 func TestClassifyPostgresConstraintErrorsAsConflict(t *testing.T) {
-	for _, code := range []string{"23505", "23503"} {
+	for _, code := range []string{"23505", "23503", "23001"} {
 		t.Run(code, func(t *testing.T) {
 			classified := Classify(&pgconn.PgError{Code: code, Message: "constraint detail must not be exposed"})
 			var httpErr *httperror.Error

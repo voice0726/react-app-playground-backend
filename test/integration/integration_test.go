@@ -117,7 +117,7 @@ func TestCrossUserIsolationAndCompositeForeignKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := db.ExecContext(ctx, `DELETE FROM customers WHERE id=$1 AND owner_user_id='user-a'`, customerA)
-	requirePGCode(t, err, "23503")
+	requirePGCode(t, err, "23001")
 }
 
 func TestInvoiceOwnerUniqueAndLockedTransition(t *testing.T) {
@@ -176,5 +176,5 @@ func TestInvoiceOwnerUniqueAndLockedTransition(t *testing.T) {
 		t.Fatalf("final invoice status=%q err=%v", status, err)
 	}
 	_, err = db.Exec(`DELETE FROM customers WHERE id=$1 AND owner_user_id='user-a'`, customerID)
-	requirePGCode(t, err, "23503")
+	requirePGCode(t, err, "23001")
 }
