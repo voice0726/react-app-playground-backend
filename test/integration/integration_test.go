@@ -80,7 +80,7 @@ func TestMigrationRoundTripUsesSchemaSQL(t *testing.T) {
 	if err := m.Up(); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"customers", "deals", "invoices", "tasks"} {
+	for _, table := range []string{"customers", "deals", "invoices", "tasks", "tickets", "ticket_histories", "ticket_comments"} {
 		var exists bool
 		if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1)`, table).Scan(&exists); err != nil || !exists {
 			t.Fatalf("table %s was not recreated: %v", table, err)
