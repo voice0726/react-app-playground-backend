@@ -140,3 +140,77 @@ func TestTicketsCrossUserIsolation(t *testing.T) {
 	_, err = db.Exec(`INSERT INTO tickets (owner_user_id, title, status, created_by_id, created_by_name, created_by_email, updated_by_id, updated_by_name, updated_by_email, created_at, updated_at) VALUES ('user-a', 't', 'bogus', 'a', 'a', 'a', 'a', 'a', 'a', now(), now())`)
 	requirePGCode(t, err, "23514")
 }
+
+func TestTicketsAssigneeNullClearsColumn(t *testing.T) {
+	db := openDB(t)
+	s := ticketService(t, db)
+	ctx := context.Background()
+	a := tickets.Actor{ID: "user-a", Name: "Alice", Email: "alice@example.com"}
+
+	created, err := s.Create(ctx, a, tickets.CreateParams{Title: "Bug", Assignee: ptr("bob")})
+	if err != nil || created.Assignee == nil {
+		t.Fatalf("created=%+v err=%v", created, err)
+	}
+	id := idString(created.ID)
+
+	patched, err := s.Patch(ctx, a, id, tickets.PatchParams{Assignee: tickets.OptionalString{Set: true}})
+	if err != nil || patched.Assignee != nil {
+		t.Fatalf("patch null: %+v err=%v", patched, err)
+	}
+	var isNull bool
+	if err := db.QueryRow(`SELECT assignee IS NULL FROM tickets WHERE id = $1`, created.ID).Scan(&isNull); err != nil || !isNull {
+		t.Fatalf("assignee column must be NULL: isNull=%v err=%v", isNull, err)
+	}
+
+	if _, err := s.Replace(ctx, a, id, tickets.ReplaceParams{Title: "Bug", Status: "open", Assignee: ptr("carol")}); err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := s.Replace(ctx, a, id, tickets.ReplaceParams{Title: "Bug", Status: "open"})
+	if err != nil || replaced.Assignee != nil {
+		t.Fatalf("replace without assignee: %+v err=%v", replaced, err)
+	}
+	if err := db.QueryRow(`SELECT assignee IS NULL FROM tickets WHERE id = $1`, created.ID).Scan(&isNull); err != nil || !isNull {
+		t.Fatalf("assignee column must be NULL after replace: isNull=%v err=%v", isNull, err)
+	}
+}
+
+func TestTicketsOtherUsersCommentsAreNotFound(t *testing.T) {
+	s := ticketService(t, openDB(t))
+	ctx := context.Background()
+	a := tickets.Actor{ID: "user-a", Name: "Alice", Email: "alice@example.com"}
+	b := tickets.Actor{ID: "user-b", Name: "Bob", Email: "bob@example.com"}
+
+	ticketA, err := s.Create(ctx, a, tickets.CreateParams{Title: "A's"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withComment, err := s.AddComment(ctx, a, idString(ticketA.ID), "A's comment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticketAID, commentID := idString(ticketA.ID), idString(withComment.Comments[0].ID)
+	ticketB, err := s.Create(ctx, b, tickets.CreateParams{Title: "B's"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 他ユーザーのチケット ID 経由: チケットが見つからない。
+	if _, err := s.UpdateComment(ctx, b, ticketAID, commentID, "hijack"); !errors.Is(err, tickets.ErrNotFound) {
+		t.Fatalf("PUT via A's ticket: %v", err)
+	}
+	if _, err := s.DeleteComment(ctx, b, ticketAID, commentID); !errors.Is(err, tickets.ErrNotFound) {
+		t.Fatalf("DELETE via A's ticket: %v", err)
+	}
+	// 自分のチケット ID に他ユーザーのコメント ID を組み合わせる: コメントが見つからない。
+	if _, err := s.UpdateComment(ctx, b, idString(ticketB.ID), commentID, "hijack"); !errors.Is(err, tickets.ErrCommentNotFound) {
+		t.Fatalf("PUT with A's comment id: %v", err)
+	}
+	if _, err := s.DeleteComment(ctx, b, idString(ticketB.ID), commentID); !errors.Is(err, tickets.ErrCommentNotFound) {
+		t.Fatalf("DELETE with A's comment id: %v", err)
+	}
+
+	got, err := s.Find(ctx, a.ID, ticketAID)
+	if err != nil || len(got.Comments) != 1 || got.Comments[0].Body != "A's comment" {
+		t.Fatalf("A's comment was modified: %+v err=%v", got, err)
+	}
+}

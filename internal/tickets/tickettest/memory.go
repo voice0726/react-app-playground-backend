@@ -114,36 +114,40 @@ func (r *Repository) AddComment(_ context.Context, user string, t tickets.Ticket
 	return e.snapshot(), nil
 }
 
+func (e *entry) commentIndex(id uint64) int {
+	return slices.IndexFunc(e.comments, func(c tickets.Comment) bool { return c.ID == id })
+}
+
 func (r *Repository) UpdateComment(_ context.Context, user string, t tickets.Ticket, c tickets.Comment) (tickets.Ticket, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e, err := r.update(user, t)
+	e, err := r.get(user, t.ID)
 	if err != nil {
 		return tickets.Ticket{}, err
 	}
-	for i := range e.comments {
-		if e.comments[i].ID == c.ID {
-			e.comments[i].Body = c.Body
-			return e.snapshot(), nil
-		}
+	i := e.commentIndex(c.ID)
+	if i < 0 {
+		return tickets.Ticket{}, tickets.ErrCommentNotFound
 	}
-	return tickets.Ticket{}, tickets.ErrCommentNotFound
+	e, _ = r.update(user, t)
+	e.comments[i].Body = c.Body
+	return e.snapshot(), nil
 }
 
 func (r *Repository) DeleteComment(_ context.Context, user string, t tickets.Ticket, commentID uint64) (tickets.Ticket, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e, err := r.update(user, t)
+	e, err := r.get(user, t.ID)
 	if err != nil {
 		return tickets.Ticket{}, err
 	}
-	for i := range e.comments {
-		if e.comments[i].ID == commentID {
-			e.comments = slices.Delete(e.comments, i, i+1)
-			return e.snapshot(), nil
-		}
+	i := e.commentIndex(commentID)
+	if i < 0 {
+		return tickets.Ticket{}, tickets.ErrCommentNotFound
 	}
-	return tickets.Ticket{}, tickets.ErrCommentNotFound
+	e, _ = r.update(user, t)
+	e.comments = slices.Delete(e.comments, i, i+1)
+	return e.snapshot(), nil
 }
 
 func (r *Repository) Delete(_ context.Context, user string, id uint64) error {

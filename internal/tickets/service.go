@@ -277,11 +277,16 @@ func compareBy(left, right Ticket, sortBy SortBy) int {
 }
 
 func paginate(items []Ticket, page, pageSize int) []Ticket {
-	start := (page - 1) * pageSize
-	if start >= len(items) {
+	// page・pageSize は int の上限まで受け付けるため、乗算せずに範囲を判定する。
+	if len(items) == 0 || page-1 > (len(items)-1)/pageSize {
 		return []Ticket{}
 	}
-	return items[start:min(start+pageSize, len(items))]
+	start := (page - 1) * pageSize
+	end := len(items)
+	if pageSize < end-start {
+		end = start + pageSize
+	}
+	return items[start:end]
 }
 
 func normalizeTitle(raw string) (string, bool) {

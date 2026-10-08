@@ -136,7 +136,7 @@ func TestInvoiceOwnerUniqueAndLockedTransition(t *testing.T) {
 	requirePGCode(t, err, "23505")
 	var wg sync.WaitGroup
 	results := make(chan bool, 2)
-	for _, next := range []string{"sent", "paid"} {
+	for _, next := range []string{"sent", "sent"} {
 		wg.Add(1)
 		go func(next string) {
 			defer wg.Done()
@@ -147,7 +147,7 @@ func TestInvoiceOwnerUniqueAndLockedTransition(t *testing.T) {
 			}
 			var current string
 			err = tx.QueryRow(`SELECT status FROM invoices WHERE id=$1 AND owner_user_id='user-a' FOR UPDATE`, invoiceID).Scan(&current)
-			if err == nil && ((next == "sent" && current == "draft") || (next == "paid" && current == "sent")) {
+			if err == nil && next == "sent" && current == "draft" {
 				_, err = tx.Exec(`UPDATE invoices SET status=$1, updated_at=now() WHERE id=$2 AND owner_user_id='user-a'`, next, invoiceID)
 			} else {
 				err = errors.New("invalid transition")

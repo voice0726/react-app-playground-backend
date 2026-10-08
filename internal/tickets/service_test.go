@@ -238,6 +238,12 @@ func TestListFilterSortPaginate(t *testing.T) {
 	if got, total := titles(url.Values{"pageSize": {"2"}, "page": {"3"}}); !reflect.DeepEqual(got, []string{"Typo"}) || total != 5 {
 		t.Fatalf("page: %v %d", got, total)
 	}
+	if got, _ := titles(url.Values{"page": {"9223372036854775807"}, "pageSize": {"2"}}); len(got) != 0 {
+		t.Fatalf("overflowing page: %v", got)
+	}
+	if got, total := titles(url.Values{"pageSize": {"9223372036854775807"}}); len(got) != 5 || total != 5 {
+		t.Fatalf("huge pageSize: %v %d", got, total)
+	}
 	if got, _ := titles(url.Values{"page": {"9"}}); len(got) != 0 {
 		t.Fatalf("page beyond end: %v", got)
 	}
