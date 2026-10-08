@@ -1,6 +1,6 @@
 # react-app-playground-backend
 
-React app playground の customers、deals、invoices、tasks API を提供する Go backend です。業務データは auth-gateway の `user_id` 単位で分離され、スキーマは `migrations/` の SQL が正です。
+React app playground の customers、deals、invoices、tasks、tickets API を提供する Go backend です。業務データは auth-gateway の `user_id` 単位で分離され、スキーマは `migrations/` の SQL が正です。
 
 ## 開発
 
@@ -18,7 +18,7 @@ Migration は `make migrate-up`、`make migrate-down`（直前の1件のみ）�
 
 ## API
 
-`/healthz`、`/readyz` と、現在 frontend が利用する customers / deals / invoices / tasks の endpoint だけを提供します。projects API、業務データの server-side pagination、OpenAPI、Kubernetes 配置は含みません。
+`/healthz`、`/readyz` と、現在 frontend が利用する customers / deals / invoices / tasks / tickets の endpoint だけを提供します。projects API、業務データの server-side pagination、OpenAPI、Kubernetes 配置は含みません。
 
 ## アプリ別の認証接続
 

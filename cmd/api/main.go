@@ -15,6 +15,7 @@ import (
 	"github.com/voice0726/react-app-playground-backend/internal/platform/httpserver"
 	"github.com/voice0726/react-app-playground-backend/internal/platform/logging"
 	"github.com/voice0726/react-app-playground-backend/internal/task"
+	"github.com/voice0726/react-app-playground-backend/internal/tickets"
 	"go.uber.org/fx"
 )
 
@@ -37,6 +38,7 @@ func main() {
 		deal.NewHandler(deal.NewService(deal.NewRepository(db), customerService)),
 		invoice.NewHandler(invoice.NewService(invoice.NewRepository(db), customerService)),
 		task.NewHandler(task.NewService(task.NewRepository(db))),
+		tickets.NewHandler(tickets.NewService(tickets.NewRepository(db))),
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
