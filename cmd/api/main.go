@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"github.com/voice0726/react-app-playground-backend/internal/config"
 	"github.com/voice0726/react-app-playground-backend/internal/customer"
@@ -83,7 +84,7 @@ func main() {
 		os.Exit(1)
 	}
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	select {
 	case <-signals:
 	case <-ctx.Done():
