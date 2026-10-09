@@ -24,7 +24,7 @@ func (r registrar) Register(g *echo.Group) { r(g) }
 func newServer(t *testing.T, gatewayStatus int, gatewayBody string) *httpserver.Server {
 	t.Helper()
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/internal/react-app-playground/session" {
+		if r.URL.Path != "/internal/session" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")

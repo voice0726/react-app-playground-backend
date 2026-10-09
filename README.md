@@ -22,8 +22,12 @@ Migration は `make migrate-up`、`make migrate-down`（直前の1件のみ）�
 
 ## アプリ別の認証接続
 
-このバックエンドはgatewayの `/internal/react-app-playground/session` を呼びます。`AUTH_GATEWAY_INTERNAL_TOKEN` はgatewayの `applications` 内の `react-app-playground` の `internal_token` と一致させてください。他アプリのトークンは使用できません。
+このバックエンドはgatewayの `/internal/session` を呼びます。`AUTH_GATEWAY_INTERNAL_TOKEN` はgatewayの `applications` 内の `react-app-playground` の `internal_token` と一致させてください。他アプリのトークンは使用できません。内部照会ではトークンでアプリを識別するため、`X-App-Id` は不要です。`/auth/*` を呼ぶフロント側の proxy では `X-App-Id: react-app-playground` が必要です。
 
 開発用フロントのURLは `http://react.localtest.me:5174` です。`PUBLIC_ORIGIN` も同じ値にします。gatewayの接続先は `http://localhost:8800` です。業務DBの変更やmigrationは今回の接続先変更には不要です。
 
 開発時の `SERVER_ADDR` は `:18080` です。ZITADELが使用するホスト側ポート `8080` との競合を避けます。
+
+## GCP デプロイ準備
+
+専用プロジェクト `react-app-playground-backend` の Terraform は [infra/README.md](infra/README.md) にあります。API と migrate Job は同じイメージを使います。Job は `/app/migrate up` を実行します。
