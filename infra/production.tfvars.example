@@ -1,0 +1,5 @@
+deploy_workloads = true
+image = "us-central1-docker.pkg.dev/react-app-playground-backend/react-app-playground-backend/api@sha256:REPLACE_WITH_DIGEST"
+auth_gateway_url = "https://REPLACE_WITH_GATEWAY_HOST"
+public_origin = "https://REPLACE_WITH_FRONTEND_HOST"
+auth_gateway_token_version = "1"

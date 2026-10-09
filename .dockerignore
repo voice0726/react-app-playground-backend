@@ -1,0 +1,10 @@
+.git
+/config
+*.pat
+.env
+.env.*
+infra
+bin
+test-results
+storage-state
+coverage.out

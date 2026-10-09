@@ -20,10 +20,10 @@ func TestGetSessionClassifiesGatewayResponses(t *testing.T) {
 	}{{"unauthenticated", 401, "", httperror.Unauthenticated}, {"contract", 200, `{"user_id":""}`, httperror.AuthGatewayContract}, {"unavailable", 503, "", httperror.AuthGatewayUnavailable}, {"success", 200, `{"user_id":"u1","name":"User","email":"u@example.com","roles":[]}`, -1}} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/internal/react-app-playground/session" {
+				if r.URL.Path != "/internal/session" {
 					t.Errorf("unexpected session endpoint: %s", r.URL.Path)
 				}
-				if r.Header.Get("Cookie") != "session=x" || r.Header.Get("X-Internal-Token") != "token" {
+				if r.Header.Get("Cookie") != "session=x" || r.Header.Get("X-Internal-Token") != "token" || r.Header.Get("X-App-Id") != "" {
 					t.Errorf("headers not forwarded safely")
 				}
 				w.WriteHeader(tc.status)

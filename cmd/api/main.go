@@ -26,9 +26,29 @@ func main() {
 		os.Exit(1)
 	}
 	logger := logging.New(cfg)
+	connectionTimeout, err := database.ConnectionTimeout()
+	if err != nil {
+		logger.Error("invalid database connection timeout", "error", err.Error())
+		os.Exit(1)
+	}
 	db, err := database.New(cfg, logger)
 	if err != nil {
 		logger.Error("database connection failed", "error", err.Error())
+		os.Exit(1)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		logger.Error("database initialization failed", "error", err.Error())
+		os.Exit(1)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	connectCtx, stopConnecting := context.WithTimeout(ctx, connectionTimeout)
+	err = database.WaitForConnection(connectCtx, sqlDB, logger)
+	stopConnecting()
+	if err != nil {
+		_ = sqlDB.Close()
+		logger.Error("database unavailable", "error", err.Error())
 		os.Exit(1)
 	}
 	server := httpserver.New(cfg, db, logger, authgateway.NewClient(cfg))
@@ -40,12 +60,6 @@ func main() {
 		task.NewHandler(task.NewService(task.NewRepository(db))),
 		tickets.NewHandler(tickets.NewService(tickets.NewRepository(db))),
 	)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if err := database.Ping(ctx, db); err != nil {
-		logger.Error("database unavailable", "error", err.Error())
-		os.Exit(1)
-	}
 	app := fx.New(fx.Invoke(func(lifecycle fx.Lifecycle) {
 		lifecycle.Append(fx.Hook{
 			OnStart: func(context.Context) error {
