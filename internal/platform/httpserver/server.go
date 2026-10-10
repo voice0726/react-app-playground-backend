@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v5"
@@ -63,9 +64,77 @@ func registerHealth(e *echo.Echo, db *gorm.DB) {
 	})
 }
 func errorHandler(c *echo.Context, err error) {
-	he := httperrorFrom(err)
-	status := map[httperror.Kind]int{httperror.Validation: 400, httperror.Unauthenticated: 401, httperror.NotFound: 404, httperror.Conflict: 409, httperror.AuthGatewayContract: 502, httperror.AuthGatewayUnavailable: 503, httperror.Internal: 500, httperror.Forbidden: 403}[he.Kind]
-	_ = c.JSON(status, map[string]interface{}{"error": map[string]string{"code": he.Code, "message": he.Message}})
+	if response, _ := echo.UnwrapResponse(c.Response()); response != nil && response.Committed {
+		return
+	}
+
+	var domainErr *httperror.Error
+	if errors.As(err, &domainErr) {
+		_ = c.JSON(statusForKind(domainErr.Kind), map[string]interface{}{"error": map[string]string{"code": domainErr.Code, "message": domainErr.Message}})
+		return
+	}
+
+	status, code, message := echoErrorResponse(err)
+	_ = c.JSON(status, map[string]interface{}{"error": map[string]string{"code": code, "message": message}})
+}
+
+func statusForKind(kind httperror.Kind) int {
+	return map[httperror.Kind]int{httperror.Validation: http.StatusBadRequest, httperror.Unauthenticated: http.StatusUnauthorized, httperror.NotFound: http.StatusNotFound, httperror.Conflict: http.StatusConflict, httperror.AuthGatewayContract: http.StatusBadGateway, httperror.AuthGatewayUnavailable: http.StatusServiceUnavailable, httperror.Internal: http.StatusInternalServerError, httperror.Forbidden: http.StatusForbidden}[kind]
+}
+
+func echoErrorResponse(err error) (int, string, string) {
+	var httpErr *echo.HTTPError
+	var statusErr echo.HTTPStatusCoder
+	if !errors.As(err, &statusErr) {
+		return http.StatusInternalServerError, "internal_error", "Internal server error."
+	}
+
+	status := statusErr.StatusCode()
+	if status < http.StatusBadRequest || status > 599 {
+		return http.StatusInternalServerError, "internal_error", "Internal server error."
+	}
+
+	code := echoErrorCode(status)
+	message := http.StatusText(status)
+	if status == http.StatusInternalServerError {
+		return status, code, "Internal server error."
+	}
+	if status < 500 && errors.As(err, &httpErr) && httpErr.Message != "" {
+		message = httpErr.Message
+	}
+	if message == "" {
+		message = "Request failed."
+	}
+	return status, code, message
+}
+
+func echoErrorCode(status int) string {
+	if code, ok := map[int]string{
+		http.StatusBadRequest:            "bad_request",
+		http.StatusUnauthorized:          "unauthorized",
+		http.StatusForbidden:             "forbidden",
+		http.StatusNotFound:              "not_found",
+		http.StatusMethodNotAllowed:      "method_not_allowed",
+		http.StatusRequestTimeout:        "request_timeout",
+		http.StatusConflict:              "conflict",
+		http.StatusRequestEntityTooLarge: "payload_too_large",
+		http.StatusUnsupportedMediaType:  "unsupported_media_type",
+		http.StatusUnprocessableEntity:   "unprocessable_entity",
+		http.StatusTooManyRequests:       "too_many_requests",
+		http.StatusInternalServerError:   "internal_error",
+		http.StatusNotImplemented:        "not_implemented",
+		http.StatusBadGateway:            "bad_gateway",
+		http.StatusServiceUnavailable:    "service_unavailable",
+		http.StatusGatewayTimeout:        "gateway_timeout",
+	}[status]; ok {
+		return code
+	}
+
+	statusText := strings.ToLower(http.StatusText(status))
+	if statusText == "" {
+		return "http_error"
+	}
+	return strings.ReplaceAll(strings.Join(strings.Fields(statusText), "_"), "'", "")
 }
 func httperrorFrom(err error) *httperror.Error {
 	var e *httperror.Error
