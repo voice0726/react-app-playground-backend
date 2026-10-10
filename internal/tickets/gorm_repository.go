@@ -3,9 +3,12 @@ package tickets
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/voice0726/react-app-playground-backend/internal/shared/dberror"
+	"github.com/voice0726/react-app-playground-backend/internal/shared/httperror"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type GORMRepository struct{ db *gorm.DB }
@@ -41,29 +44,62 @@ func (r *GORMRepository) Create(ctx context.Context, user string, ticket Ticket)
 	return ticket, nil
 }
 
-func (r *GORMRepository) Replace(ctx context.Context, user string, ticket Ticket, history []HistoryItem) (Ticket, error) {
-	return r.mutate(ctx, user, ticket, func(tx *gorm.DB) error {
-		if records := toHistoryRecords(user, ticket.ID, history); len(records) > 0 {
-			return tx.Create(&records).Error
+func (r *GORMRepository) UpdateLocked(ctx context.Context, user string, id uint64, apply func(Ticket) (Ticket, []HistoryItem, error)) (Ticket, error) {
+	var out Ticket
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		current, err := lockTicket(tx, user, id)
+		if err != nil {
+			return err
 		}
-		return nil
+		next, history, err := apply(current)
+		if err != nil {
+			return err
+		}
+		next.ID, next.OwnerUserID = id, user
+		result := tx.Model(&Ticket{}).Where("owner_user_id = ? AND id = ?", user, id).Updates(map[string]any{
+			"title": next.Title, "status": next.Status, "assignee": next.Assignee,
+			"updated_by_id": next.UpdatedBy.ID, "updated_by_name": next.UpdatedBy.Name,
+			"updated_by_email": next.UpdatedBy.Email, "updated_at": next.UpdatedAt.UTC(),
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if records := toHistoryRecords(user, id, history); len(records) > 0 {
+			if err := tx.Create(&records).Error; err != nil {
+				return err
+			}
+		}
+		found, err := find(tx, user, id)
+		out = found
+		return err
 	})
+	if err != nil {
+		return Ticket{}, classify(err)
+	}
+	return out, nil
 }
 
-func (r *GORMRepository) AddComment(ctx context.Context, user string, ticket Ticket, comment Comment) (Ticket, error) {
-	return r.mutate(ctx, user, ticket, func(tx *gorm.DB) error {
+func (r *GORMRepository) AddComment(ctx context.Context, user string, id uint64, updatedBy Actor, now func() time.Time, comment Comment) (Ticket, error) {
+	return r.mutateComment(ctx, user, id, updatedBy, now, func(tx *gorm.DB, changedAt time.Time) error {
 		comment.OwnerUserID = user
-		comment.TicketID = ticket.ID
-		comment.CreatedAt = comment.CreatedAt.UTC()
+		comment.TicketID = id
+		comment.CreatedAt = changedAt
 		return tx.Create(&comment).Error
 	})
 }
 
-func (r *GORMRepository) UpdateComment(ctx context.Context, user string, ticket Ticket, comment Comment) (Ticket, error) {
-	return r.mutate(ctx, user, ticket, func(tx *gorm.DB) error {
+func (r *GORMRepository) UpdateComment(ctx context.Context, user string, id, commentID uint64, actor Actor, now func() time.Time, body string) (Ticket, error) {
+	return r.mutateComment(ctx, user, id, actor, now, func(tx *gorm.DB, _ time.Time) error {
+		comment, err := findComment(tx, user, id, commentID)
+		if err != nil {
+			return err
+		}
+		if comment.CreatedBy.ID != actor.ID {
+			return ErrCommentPermissionDenied
+		}
 		result := tx.Model(&Comment{}).
-			Where("owner_user_id = ? AND ticket_id = ? AND id = ?", user, ticket.ID, comment.ID).
-			Update("body", comment.Body)
+			Where("owner_user_id = ? AND ticket_id = ? AND id = ?", user, id, commentID).
+			Update("body", body)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -74,9 +110,16 @@ func (r *GORMRepository) UpdateComment(ctx context.Context, user string, ticket 
 	})
 }
 
-func (r *GORMRepository) DeleteComment(ctx context.Context, user string, ticket Ticket, commentID uint64) (Ticket, error) {
-	return r.mutate(ctx, user, ticket, func(tx *gorm.DB) error {
-		result := tx.Where("owner_user_id = ? AND ticket_id = ? AND id = ?", user, ticket.ID, commentID).Delete(&Comment{})
+func (r *GORMRepository) DeleteComment(ctx context.Context, user string, id, commentID uint64, actor Actor, now func() time.Time) (Ticket, error) {
+	return r.mutateComment(ctx, user, id, actor, now, func(tx *gorm.DB, _ time.Time) error {
+		comment, err := findComment(tx, user, id, commentID)
+		if err != nil {
+			return err
+		}
+		if comment.CreatedBy.ID != actor.ID {
+			return ErrCommentPermissionDenied
+		}
+		result := tx.Where("owner_user_id = ? AND ticket_id = ? AND id = ?", user, id, commentID).Delete(&Comment{})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -98,34 +141,51 @@ func (r *GORMRepository) Delete(ctx context.Context, user string, id uint64) err
 	return nil
 }
 
-// mutate は 1 トランザクションで ticket 行を更新し、続けて apply を実行して、更新後の ticket を返す。
-func (r *GORMRepository) mutate(ctx context.Context, user string, ticket Ticket, apply func(*gorm.DB) error) (Ticket, error) {
+func (r *GORMRepository) mutateComment(ctx context.Context, user string, id uint64, updatedBy Actor, now func() time.Time, apply func(*gorm.DB, time.Time) error) (Ticket, error) {
 	var out Ticket
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&Ticket{}).Where("owner_user_id = ? AND id = ?", user, ticket.ID).Updates(map[string]any{
-			"title":            ticket.Title,
-			"status":           ticket.Status,
-			"assignee":         ticket.Assignee,
-			"updated_by_id":    ticket.UpdatedBy.ID,
-			"updated_by_name":  ticket.UpdatedBy.Name,
-			"updated_by_email": ticket.UpdatedBy.Email,
-			"updated_at":       ticket.UpdatedAt.UTC(),
+		if _, err := lockTicket(tx, user, id); err != nil {
+			return err
+		}
+		updatedAt := now().UTC()
+		if err := apply(tx, updatedAt); err != nil {
+			return err
+		}
+		result := tx.Model(&Ticket{}).Where("owner_user_id = ? AND id = ?", user, id).Updates(map[string]any{
+			"updated_by_id": updatedBy.ID, "updated_by_name": updatedBy.Name,
+			"updated_by_email": updatedBy.Email, "updated_at": updatedAt.UTC(),
 		})
 		if result.Error != nil {
 			return result.Error
 		}
-		if result.RowsAffected == 0 {
-			return ErrNotFound
-		}
-		if err := apply(tx); err != nil {
-			return err
-		}
-		found, err := find(tx, user, ticket.ID)
+		found, err := find(tx, user, id)
 		out = found
 		return err
 	})
 	if err != nil {
 		return Ticket{}, classify(err)
+	}
+	return out, nil
+}
+
+func lockTicket(tx *gorm.DB, user string, id uint64) (Ticket, error) {
+	var out Ticket
+	if err := tx.Where("owner_user_id = ? AND id = ?", user, id).Clauses(clause.Locking{Strength: "UPDATE"}).First(&out).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return Ticket{}, ErrNotFound
+		}
+		return Ticket{}, err
+	}
+	return out, nil
+}
+
+func findComment(tx *gorm.DB, user string, ticketID, commentID uint64) (Comment, error) {
+	var out Comment
+	if err := tx.Where("owner_user_id = ? AND ticket_id = ? AND id = ?", user, ticketID, commentID).First(&out).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return Comment{}, ErrCommentNotFound
+		}
+		return Comment{}, err
 	}
 	return out, nil
 }
@@ -152,7 +212,8 @@ func find(db *gorm.DB, user string, id uint64) (Ticket, error) {
 
 // classify はドメインエラーをそのまま通し、それ以外を DB エラーとして分類する。
 func classify(err error) error {
-	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrCommentNotFound) {
+	var httpErr *httperror.Error
+	if errors.As(err, &httpErr) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrCommentNotFound) || errors.Is(err, ErrCommentPermissionDenied) {
 		return err
 	}
 	return dberror.Classify(err)

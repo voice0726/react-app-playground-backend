@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -215,5 +216,79 @@ func TestTicketsOriginGuardCoversPut(t *testing.T) {
 		if res := a.do("session=a", tc.method, tc.path, tc.body); res.Code != http.StatusForbidden || errorCode(t, res) != "origin_forbidden" {
 			t.Errorf("%s %s: status=%d body=%s", tc.method, tc.path, res.Code, res.Body.String())
 		}
+	}
+}
+
+func TestTicketsConcurrentIndependentPatchesAreMerged(t *testing.T) {
+	a := newTicketAPI(t)
+	a.json(a.do("session=a", http.MethodPost, "/api/tickets", `{"title":"old","assignee":"old"}`), http.StatusCreated)
+
+	bodies := []string{`{"title":"new"}`, `{"assignee":"new"}`}
+	responses := make([]*httptest.ResponseRecorder, len(bodies))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, body := range bodies {
+		wg.Add(1)
+		go func(i int, body string) {
+			defer wg.Done()
+			<-start
+			responses[i] = a.do("session=a", http.MethodPatch, "/api/tickets/1", body)
+		}(i, body)
+	}
+	close(start)
+	wg.Wait()
+	for _, res := range responses {
+		a.json(res, http.StatusOK)
+	}
+
+	got := a.json(a.do("session=a", http.MethodGet, "/api/tickets/1", ""), http.StatusOK)
+	if got["title"] != "new" || got["assignee"] != "new" {
+		t.Fatalf("concurrent patches lost an update: %v", got)
+	}
+}
+
+func TestTicketsConcurrentCommentAndClosePreserveStatusHistory(t *testing.T) {
+	a := newTicketAPI(t)
+	a.json(a.do("session=a", http.MethodPost, "/api/tickets", `{"title":"bug"}`), http.StatusCreated)
+
+	requests := []struct {
+		method, path, body string
+		status             int
+	}{
+		{http.MethodPatch, "/api/tickets/1", `{"status":"closed"}`, http.StatusOK},
+		{http.MethodPost, "/api/tickets/1/comments", `{"body":"triaged"}`, http.StatusCreated},
+	}
+	responses := make([]*httptest.ResponseRecorder, len(requests))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i, req := range requests {
+		wg.Add(1)
+		go func(i int, method, path, body string) {
+			defer wg.Done()
+			<-start
+			responses[i] = a.do("session=a", method, path, body)
+		}(i, req.method, req.path, req.body)
+	}
+	close(start)
+	wg.Wait()
+	for i, res := range responses {
+		a.json(res, requests[i].status)
+	}
+
+	got := a.json(a.do("session=a", http.MethodGet, "/api/tickets/1", ""), http.StatusOK)
+	if got["status"] != "closed" {
+		t.Fatalf("comment overwrote closed status: %v", got)
+	}
+	history := got["history"].(map[string]any)["items"].([]any)
+	if len(history) != 1 {
+		t.Fatalf("history=%v, want one status change", history)
+	}
+	changes := history[0].(map[string]any)["changes"].([]any)
+	if len(changes) != 1 || changes[0].(map[string]any)["before"] != "open" || changes[0].(map[string]any)["after"] != "closed" {
+		t.Fatalf("status history=%v", history)
+	}
+	comments := got["comments"].(map[string]any)["items"].([]any)
+	if len(comments) != 1 || comments[0].(map[string]any)["body"] != "triaged" {
+		t.Fatalf("comments=%v", comments)
 	}
 }

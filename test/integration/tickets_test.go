@@ -8,7 +8,10 @@ import (
 	"errors"
 	"net/url"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/voice0726/react-app-playground-backend/internal/tickets"
 	"gorm.io/driver/postgres"
@@ -16,6 +19,11 @@ import (
 )
 
 func ticketService(t *testing.T, db *sql.DB) *tickets.Service {
+	t.Helper()
+	return tickets.NewService(ticketRepository(t, db))
+}
+
+func ticketRepository(t *testing.T, db *sql.DB) *tickets.GORMRepository {
 	t.Helper()
 	ensureUp(t, db)
 	if _, err := db.Exec(`DELETE FROM ticket_comments; DELETE FROM ticket_histories; DELETE FROM tickets`); err != nil {
@@ -25,7 +33,37 @@ func ticketService(t *testing.T, db *sql.DB) *tickets.Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return tickets.NewService(tickets.NewRepository(gdb))
+	return tickets.NewRepository(gdb)
+}
+
+type gatedUpdateRepository struct {
+	tickets.Repository
+	firstEntered  chan struct{}
+	continueFirst chan struct{}
+	updates       atomic.Int32
+}
+
+func (r *gatedUpdateRepository) UpdateLocked(ctx context.Context, user string, id uint64, apply func(tickets.Ticket) (tickets.Ticket, []tickets.HistoryItem, error)) (tickets.Ticket, error) {
+	switch r.updates.Add(1) {
+	case 1:
+		return r.Repository.UpdateLocked(ctx, user, id, func(current tickets.Ticket) (tickets.Ticket, []tickets.HistoryItem, error) {
+			close(r.firstEntered)
+			<-r.continueFirst
+			return apply(current)
+		})
+	}
+	return r.Repository.UpdateLocked(ctx, user, id, apply)
+}
+
+type gatedAddCommentRepository struct {
+	tickets.Repository
+	started chan struct{}
+	once    sync.Once
+}
+
+func (r *gatedAddCommentRepository) AddComment(ctx context.Context, user string, id uint64, updatedBy tickets.Actor, now func() time.Time, comment tickets.Comment) (tickets.Ticket, error) {
+	r.once.Do(func() { close(r.started) })
+	return r.Repository.AddComment(ctx, user, id, updatedBy, now, comment)
 }
 
 func idString(n uint64) string { return strconv.FormatUint(n, 10) }
@@ -212,5 +250,135 @@ func TestTicketsOtherUsersCommentsAreNotFound(t *testing.T) {
 	got, err := s.Find(ctx, a.ID, ticketAID)
 	if err != nil || len(got.Comments) != 1 || got.Comments[0].Body != "A's comment" {
 		t.Fatalf("A's comment was modified: %+v err=%v", got, err)
+	}
+}
+
+func TestTicketsConcurrentIndependentPatchesAreMerged(t *testing.T) {
+	db := openDB(t)
+	s := ticketService(t, db)
+	ctx := context.Background()
+	actor := tickets.Actor{ID: "user-a", Name: "Alice", Email: "alice@example.com"}
+	created, err := s.Create(ctx, actor, tickets.CreateParams{Title: "old", Assignee: ptr("old")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blocker, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback()
+	var lockedID uint64
+	if err := blocker.QueryRowContext(ctx, `SELECT id FROM tickets WHERE owner_user_id = $1 AND id = $2 FOR UPDATE`, actor.ID, created.ID).Scan(&lockedID); err != nil {
+		t.Fatal(err)
+	}
+
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, patch := range []tickets.PatchParams{
+		{Title: tickets.OptionalString{Set: true, Value: ptr("new")}},
+		{Assignee: tickets.OptionalString{Set: true, Value: ptr("new")}},
+	} {
+		wg.Add(1)
+		go func(patch tickets.PatchParams) {
+			defer wg.Done()
+			_, err := s.Patch(ctx, actor, idString(created.ID), patch)
+			errs <- err
+		}(patch)
+	}
+	waitForTicketLockWaiters(t, db, 2)
+	if err := blocker.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.Find(ctx, actor.ID, idString(created.ID))
+	if err != nil || got.Title != "new" || got.Assignee == nil || *got.Assignee != "new" {
+		t.Fatalf("concurrent patches lost an update: ticket=%+v err=%v", got, err)
+	}
+}
+
+func TestTicketsConcurrentCommentAndClosePreserveStatusHistory(t *testing.T) {
+	db := openDB(t)
+	updates := &gatedUpdateRepository{Repository: ticketRepository(t, db), firstEntered: make(chan struct{}), continueFirst: make(chan struct{})}
+	repo := &gatedAddCommentRepository{Repository: updates, started: make(chan struct{})}
+	s := tickets.NewService(repo)
+	ctx := context.Background()
+	actor := tickets.Actor{ID: "user-a", Name: "Alice", Email: "alice@example.com"}
+	created, err := s.Create(ctx, actor, tickets.CreateParams{Title: "bug"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var release sync.Once
+	releaseClose := func() { release.Do(func() { close(updates.continueFirst) }) }
+	defer releaseClose()
+	go func() {
+		defer wg.Done()
+		_, err := s.Patch(ctx, actor, idString(created.ID), tickets.PatchParams{Status: tickets.OptionalString{Set: true, Value: ptr("closed")}})
+		errs <- err
+	}()
+	waitForSignal(t, updates.firstEntered, "close patch to acquire the ticket row")
+	go func() {
+		defer wg.Done()
+		_, err := s.AddComment(ctx, actor, idString(created.ID), "triaged")
+		errs <- err
+	}()
+	waitForSignal(t, repo.started, "comment operation to wait on the ticket row")
+	waitForTicketLockWaiters(t, db, 1)
+	releaseClose()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.Find(ctx, actor.ID, idString(created.ID))
+	if err != nil || got.Status != tickets.StatusClosed || len(got.Comments) != 1 || got.Comments[0].Body != "triaged" {
+		t.Fatalf("comment overwrote ticket state: ticket=%+v err=%v", got, err)
+	}
+	if len(got.History) != 1 || len(got.History[0].Changes) != 1 {
+		t.Fatalf("history=%+v, want one status change", got.History)
+	}
+	change := got.History[0].Changes[0]
+	if change.Field != tickets.HistoryFieldStatus || change.Before == nil || *change.Before != "open" || change.After == nil || *change.After != "closed" {
+		t.Fatalf("status history=%+v", got.History)
+	}
+}
+
+func waitForTicketLockWaiters(t *testing.T, db *sql.DB, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting int
+		err := db.QueryRow(`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query ILIKE '%tickets%'`).Scan(&waiting)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if waiting == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d ticket row lock waiters", want)
+}
+
+func waitForSignal(t *testing.T, signal <-chan struct{}, operation string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", operation)
 	}
 }

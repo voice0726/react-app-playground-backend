@@ -92,42 +92,46 @@ func (s *Service) Replace(ctx context.Context, actor Actor, id string, p Replace
 	if !ok {
 		return Ticket{}, ErrInvalidStatus
 	}
-	existing, err := s.load(ctx, actor.ID, id)
+	parsed, err := parseID(id, ErrNotFound)
 	if err != nil {
 		return Ticket{}, err
 	}
-	previous := existing.Status
-	existing.Title, existing.Status, existing.Assignee = title, status, normalizeAssignee(p.Assignee)
-	return s.save(ctx, actor, existing, previous)
+	return s.repo.UpdateLocked(ctx, actor.ID, parsed, func(existing Ticket) (Ticket, []HistoryItem, error) {
+		previous := existing.Status
+		existing.Title, existing.Status, existing.Assignee = title, status, normalizeAssignee(p.Assignee)
+		return s.prepareUpdate(actor, existing, previous)
+	})
 }
 
 func (s *Service) Patch(ctx context.Context, actor Actor, id string, p PatchParams) (Ticket, error) {
-	existing, err := s.load(ctx, actor.ID, id)
+	parsed, err := parseID(id, ErrNotFound)
 	if err != nil {
 		return Ticket{}, err
 	}
-	previous := existing.Status
-	if p.Title.Set {
-		title, ok := normalizeTitle(p.Title.String())
-		if !ok {
-			return Ticket{}, ErrInvalidTitle
+	return s.repo.UpdateLocked(ctx, actor.ID, parsed, func(existing Ticket) (Ticket, []HistoryItem, error) {
+		previous := existing.Status
+		if p.Title.Set {
+			title, ok := normalizeTitle(p.Title.String())
+			if !ok {
+				return Ticket{}, nil, ErrInvalidTitle
+			}
+			existing.Title = title
 		}
-		existing.Title = title
-	}
-	if p.Status.Set {
-		status, ok := normalizeStatus(Status(p.Status.String()), "")
-		if !ok {
-			return Ticket{}, ErrInvalidStatus
+		if p.Status.Set {
+			status, ok := normalizeStatus(Status(p.Status.String()), "")
+			if !ok {
+				return Ticket{}, nil, ErrInvalidStatus
+			}
+			existing.Status = status
 		}
-		existing.Status = status
-	}
-	if p.Assignee.Set {
-		existing.Assignee = normalizeAssignee(p.Assignee.Value)
-	}
-	if !p.Title.Set && !p.Status.Set && !p.Assignee.Set {
-		return Ticket{}, ErrEmptyPatch
-	}
-	return s.save(ctx, actor, existing, previous)
+		if p.Assignee.Set {
+			existing.Assignee = normalizeAssignee(p.Assignee.Value)
+		}
+		if !p.Title.Set && !p.Status.Set && !p.Assignee.Set {
+			return Ticket{}, nil, ErrEmptyPatch
+		}
+		return s.prepareUpdate(actor, existing, previous)
+	})
 }
 
 func (s *Service) Delete(ctx context.Context, user string, id string) error {
@@ -147,13 +151,7 @@ func (s *Service) AddComment(ctx context.Context, actor Actor, id string, body s
 	if !ok {
 		return Ticket{}, ErrInvalidCommentBody
 	}
-	existing, err := s.repo.Find(ctx, actor.ID, ticketID)
-	if err != nil {
-		return Ticket{}, err
-	}
-	now := s.now()
-	existing.UpdatedBy, existing.UpdatedAt = actor, now
-	return s.repo.AddComment(ctx, actor.ID, existing, Comment{Body: text, CreatedBy: actor, CreatedAt: now})
+	return s.repo.AddComment(ctx, actor.ID, ticketID, actor, s.now, Comment{Body: text, CreatedBy: actor})
 }
 
 func (s *Service) UpdateComment(ctx context.Context, actor Actor, id string, commentID string, body string) (Ticket, error) {
@@ -165,13 +163,7 @@ func (s *Service) UpdateComment(ctx context.Context, actor Actor, id string, com
 	if !ok {
 		return Ticket{}, ErrInvalidCommentBody
 	}
-	existing, comment, err := s.loadComment(ctx, actor, ticketID, parsedComment)
-	if err != nil {
-		return Ticket{}, err
-	}
-	existing.UpdatedBy, existing.UpdatedAt = actor, s.now()
-	comment.Body = text
-	return s.repo.UpdateComment(ctx, actor.ID, existing, comment)
+	return s.repo.UpdateComment(ctx, actor.ID, ticketID, parsedComment, actor, s.now, text)
 }
 
 func (s *Service) DeleteComment(ctx context.Context, actor Actor, id string, commentID string) (Ticket, error) {
@@ -179,53 +171,21 @@ func (s *Service) DeleteComment(ctx context.Context, actor Actor, id string, com
 	if err != nil {
 		return Ticket{}, err
 	}
-	existing, comment, err := s.loadComment(ctx, actor, ticketID, parsedComment)
-	if err != nil {
-		return Ticket{}, err
-	}
-	existing.UpdatedBy, existing.UpdatedAt = actor, s.now()
-	return s.repo.DeleteComment(ctx, actor.ID, existing, comment.ID)
+	return s.repo.DeleteComment(ctx, actor.ID, ticketID, parsedComment, actor, s.now)
 }
 
-func (s *Service) load(ctx context.Context, user string, id string) (Ticket, error) {
-	parsed, err := parseID(id, ErrNotFound)
-	if err != nil {
-		return Ticket{}, err
-	}
-	return s.repo.Find(ctx, user, parsed)
-}
-
-// loadComment は ticket と対象 comment を取得し、操作者が作成者であることを確認する。
-func (s *Service) loadComment(ctx context.Context, actor Actor, ticketID, parsedComment uint64) (Ticket, Comment, error) {
-	existing, err := s.repo.Find(ctx, actor.ID, ticketID)
-	if err != nil {
-		return Ticket{}, Comment{}, err
-	}
-	for _, comment := range existing.Comments {
-		if comment.ID != parsedComment {
-			continue
-		}
-		if comment.CreatedBy.ID != actor.ID {
-			return Ticket{}, Comment{}, ErrCommentPermissionDenied
-		}
-		return existing, comment, nil
-	}
-	return Ticket{}, Comment{}, ErrCommentNotFound
-}
-
-// save は更新者と更新時刻を設定し、status が変わっていれば履歴を付けて保存する。
-func (s *Service) save(ctx context.Context, actor Actor, ticket Ticket, previous Status) (Ticket, error) {
+func (s *Service) prepareUpdate(actor Actor, ticket Ticket, previous Status) (Ticket, []HistoryItem, error) {
 	now := s.now()
 	ticket.UpdatedBy, ticket.UpdatedAt = actor, now
 	var history []HistoryItem
 	if previous != ticket.Status {
 		operationID, err := s.generateOperationID()
 		if err != nil {
-			return Ticket{}, err
+			return Ticket{}, nil, err
 		}
 		history = buildStatusHistory(operationID, previous, ticket.Status, actor, now)
 	}
-	return s.repo.Replace(ctx, actor.ID, ticket, history)
+	return ticket, history, nil
 }
 
 func filterByStatus(items []Ticket, status Status) []Ticket {

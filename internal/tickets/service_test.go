@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/voice0726/react-app-playground-backend/internal/tickets"
 	"github.com/voice0726/react-app-playground-backend/internal/tickets/tickettest"
@@ -193,7 +194,7 @@ func TestCommentByAnotherAuthorIsForbidden(t *testing.T) {
 	s := tickets.NewService(repo)
 	ctx := context.Background()
 	created := mustCreate(t, s, alice, "A")
-	withComment, err := repo.AddComment(ctx, alice.ID, created, tickets.Comment{Body: "by bob", CreatedBy: bob})
+	withComment, err := repo.AddComment(ctx, alice.ID, created.ID, alice, func() time.Time { return created.UpdatedAt }, tickets.Comment{Body: "by bob", CreatedBy: bob})
 	if err != nil {
 		t.Fatal(err)
 	}
