@@ -223,18 +223,23 @@ func TestTicketsConcurrentIndependentPatchesAreMerged(t *testing.T) {
 	a := newTicketAPI(t)
 	a.json(a.do("session=a", http.MethodPost, "/api/tickets", `{"title":"old","assignee":"old"}`), http.StatusCreated)
 
+	bodies := []string{`{"title":"new"}`, `{"assignee":"new"}`}
+	responses := make([]*httptest.ResponseRecorder, len(bodies))
 	start := make(chan struct{})
 	var wg sync.WaitGroup
-	for _, body := range []string{`{"title":"new"}`, `{"assignee":"new"}`} {
+	for i, body := range bodies {
 		wg.Add(1)
-		go func(body string) {
+		go func(i int, body string) {
 			defer wg.Done()
 			<-start
-			a.json(a.do("session=a", http.MethodPatch, "/api/tickets/1", body), http.StatusOK)
-		}(body)
+			responses[i] = a.do("session=a", http.MethodPatch, "/api/tickets/1", body)
+		}(i, body)
 	}
 	close(start)
 	wg.Wait()
+	for _, res := range responses {
+		a.json(res, http.StatusOK)
+	}
 
 	got := a.json(a.do("session=a", http.MethodGet, "/api/tickets/1", ""), http.StatusOK)
 	if got["title"] != "new" || got["assignee"] != "new" {
@@ -246,25 +251,29 @@ func TestTicketsConcurrentCommentAndClosePreserveStatusHistory(t *testing.T) {
 	a := newTicketAPI(t)
 	a.json(a.do("session=a", http.MethodPost, "/api/tickets", `{"title":"bug"}`), http.StatusCreated)
 
+	requests := []struct {
+		method, path, body string
+		status             int
+	}{
+		{http.MethodPatch, "/api/tickets/1", `{"status":"closed"}`, http.StatusOK},
+		{http.MethodPost, "/api/tickets/1/comments", `{"body":"triaged"}`, http.StatusCreated},
+	}
+	responses := make([]*httptest.ResponseRecorder, len(requests))
 	start := make(chan struct{})
 	var wg sync.WaitGroup
-	for _, operation := range []func(){
-		func() {
-			a.json(a.do("session=a", http.MethodPatch, "/api/tickets/1", `{"status":"closed"}`), http.StatusOK)
-		},
-		func() {
-			a.json(a.do("session=a", http.MethodPost, "/api/tickets/1/comments", `{"body":"triaged"}`), http.StatusCreated)
-		},
-	} {
+	for i, req := range requests {
 		wg.Add(1)
-		go func(operation func()) {
+		go func(i int, method, path, body string) {
 			defer wg.Done()
 			<-start
-			operation()
-		}(operation)
+			responses[i] = a.do("session=a", method, path, body)
+		}(i, req.method, req.path, req.body)
 	}
 	close(start)
 	wg.Wait()
+	for i, res := range responses {
+		a.json(res, requests[i].status)
+	}
 
 	got := a.json(a.do("session=a", http.MethodGet, "/api/tickets/1", ""), http.StatusOK)
 	if got["status"] != "closed" {
