@@ -18,7 +18,7 @@ Migration は `make migrate-up`、`make migrate-down`（直前の1件のみ）�
 
 ## API
 
-`/healthz` と `/readyz` は認証なしです。業務 API は `/api` 配下にあり、auth-gateway のセッション確認と Origin チェックを通ります。
+`/healthz` と `/readyz` は認証なしです。業務 API は `/api` 配下にあり、auth-gateway のセッション確認を通り、POST/PUT/PATCH/DELETE ではさらに Origin チェックを通ります。
 
 | リソース | endpoint |
 | --- | --- |
@@ -28,7 +28,7 @@ Migration は `make migrate-up`、`make migrate-down`（直前の1件のみ）�
 | tasks | `GET/POST /api/tasks`、`PATCH/DELETE /api/tasks/:id` |
 | tickets | `GET/POST /api/tickets`、`GET/PUT/PATCH/DELETE /api/tickets/:id`、`POST /api/tickets/:id/comments`、`PUT/DELETE /api/tickets/:id/comments/:commentId` |
 
-projects API、業務データの server-side pagination、OpenAPI、Kubernetes 配置は含みません。
+tickets の一覧 API だけが server-side pagination（`page`・`pageSize`）に対応します。projects API、OpenAPI、Kubernetes 配置は含みません。
 
 ## アプリ別の認証接続
 
