@@ -12,13 +12,23 @@ make migrate-up
 go run ./cmd/api
 ```
 
-auth-gateway は別 repository で起動し、frontend は `VITE_USE_MSW=false pnpm --filter @playground/web dev` で起動します。Vite の `/api` と `/auth` proxy により同一 origin で接続します。
+auth-gateway は別 repository で起動し、frontend は `VITE_USE_MSW=false pnpm --filter @playground/web dev` で起動します。Vite の `/api` と `/auth` proxy により同一 origin で接続します。logout は auth-gateway の POST `/auth/logout` を使い、GET logout は状態を変更しません。
 
-Migration は `make migrate-up`、`make migrate-down`（直前の1件のみ）、`make migrate-version` で操作します。CIと `make verify` は `make migration-roundtrip` で同じSQL migrationの up -> down 1 -> up を実行し、`make integration` でPostgreSQL統合テストを実行します。logout は auth-gateway の POST `/auth/logout` を使い、GET logout は状態を変更しません。
+Migration は `make migrate-up`、`make migrate-down`（直前の1件のみ）、`make migrate-version` で操作します。`make verify` は fmt → vet → test → migration-roundtrip（up → down 1 → up）→ integration（PostgreSQL 統合テスト）→ build を順に実行します。CI は同じ検証に加えて gofmt の差分確認と `docker build` を実行します。
 
 ## API
 
-`/healthz`、`/readyz` と、現在 frontend が利用する customers / deals / invoices / tasks / tickets の endpoint だけを提供します。projects API、業務データの server-side pagination、OpenAPI、Kubernetes 配置は含みません。
+`/healthz` と `/readyz` は認証なしです。業務 API は `/api` 配下にあり、auth-gateway のセッション確認を通り、POST/PUT/PATCH/DELETE ではさらに Origin チェックを通ります。
+
+| リソース | endpoint |
+| --- | --- |
+| customers | `GET/POST /api/customers`、`GET/PATCH/DELETE /api/customers/:id` |
+| deals | `GET/POST /api/deals`、`GET/PATCH /api/deals/:id` |
+| invoices | `GET/POST /api/invoices`、`GET/PATCH /api/invoices/:id` |
+| tasks | `GET/POST /api/tasks`、`PATCH/DELETE /api/tasks/:id` |
+| tickets | `GET/POST /api/tickets`、`GET/PUT/PATCH/DELETE /api/tickets/:id`、`POST /api/tickets/:id/comments`、`PUT/DELETE /api/tickets/:id/comments/:commentId` |
+
+tickets の一覧 API だけが server-side pagination（`page`・`pageSize`）に対応します。projects API、OpenAPI、Kubernetes 配置は含みません。
 
 ## アプリ別の認証接続
 
