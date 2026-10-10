@@ -35,6 +35,67 @@ func TestDecodeAcceptsJSON(t *testing.T) {
 	}
 }
 
+func TestDecodeAcceptsJSONMediaTypeParametersAndCase(t *testing.T) {
+	for _, contentType := range []string{
+		"application/json; charset=utf-8",
+		"Application/JSON; charset=utf-8",
+	} {
+		t.Run(contentType, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/", strings.NewReader(`{"known":"x"}`))
+			r.Header.Set("Content-Type", contentType)
+			var v struct {
+				Known string `json:"known"`
+			}
+			if err := Decode(r, &v); err != nil {
+				t.Fatalf("Decode returned error: %v", err)
+			}
+			if v.Known != "x" {
+				t.Fatalf("decoded value = %q, want %q", v.Known, "x")
+			}
+		})
+	}
+}
+
+func TestDecodeRejectsInvalidContentType(t *testing.T) {
+	for _, contentType := range []string{"", "text/plain", "application/json; charset"} {
+		t.Run(contentType, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/", strings.NewReader(`{"known":"x"}`))
+			if contentType != "" {
+				r.Header.Set("Content-Type", contentType)
+			}
+			var v struct {
+				Known string `json:"known"`
+			}
+			if err := Decode(r, &v); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("Decode error = %v, want %v", err, ErrInvalid)
+			}
+		})
+	}
+}
+
+func TestDecodePreservesJSONValidationWithMediaTypeParameters(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "oversized", body: `{"known":"x"}` + strings.Repeat(" ", maxBodyBytes)},
+		{name: "unknown field", body: `{"known":"x","unknown":1}`},
+		{name: "trailing JSON", body: `{"known":"x"}{"known":"y"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/", strings.NewReader(tt.body))
+			r.Header.Set("Content-Type", "application/json; charset=utf-8")
+			var v struct {
+				Known string `json:"known"`
+			}
+			if err := Decode(r, &v); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("Decode error = %v, want %v", err, ErrInvalid)
+			}
+		})
+	}
+}
+
 func TestDecodeAcceptsBodyAtLimit(t *testing.T) {
 	const prefix = `{"known":"`
 	const suffix = `"}`
