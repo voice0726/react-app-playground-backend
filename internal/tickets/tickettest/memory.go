@@ -5,6 +5,7 @@ import (
 	"context"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/voice0726/react-app-playground-backend/internal/tickets"
 )
@@ -80,36 +81,35 @@ func (r *Repository) Create(_ context.Context, user string, t tickets.Ticket) (t
 	return e.snapshot(), nil
 }
 
-func (r *Repository) update(user string, t tickets.Ticket) (*entry, error) {
-	e, err := r.get(user, t.ID)
-	if err != nil {
-		return nil, err
-	}
-	t.OwnerUserID, t.CreatedBy, t.CreatedAt = user, e.ticket.CreatedBy, e.ticket.CreatedAt
-	e.ticket = t
-	return e, nil
-}
-
-func (r *Repository) Replace(_ context.Context, user string, t tickets.Ticket, history []tickets.HistoryItem) (tickets.Ticket, error) {
+func (r *Repository) UpdateLocked(_ context.Context, user string, id uint64, apply func(tickets.Ticket) (tickets.Ticket, []tickets.HistoryItem, error)) (tickets.Ticket, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e, err := r.update(user, t)
+	e, err := r.get(user, id)
 	if err != nil {
 		return tickets.Ticket{}, err
 	}
+	t, history, err := apply(e.snapshot())
+	if err != nil {
+		return tickets.Ticket{}, err
+	}
+	t.OwnerUserID, t.CreatedBy, t.CreatedAt = user, e.ticket.CreatedBy, e.ticket.CreatedAt
+	e.ticket = t
 	e.history = append(e.history, history...)
 	return e.snapshot(), nil
 }
 
-func (r *Repository) AddComment(_ context.Context, user string, t tickets.Ticket, c tickets.Comment) (tickets.Ticket, error) {
+func (r *Repository) AddComment(_ context.Context, user string, id uint64, updatedBy tickets.Actor, now func() time.Time, c tickets.Comment) (tickets.Ticket, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e, err := r.update(user, t)
+	e, err := r.get(user, id)
 	if err != nil {
 		return tickets.Ticket{}, err
 	}
+	updatedAt := now().UTC()
+	e.ticket.UpdatedBy, e.ticket.UpdatedAt = updatedBy, updatedAt
+	c.CreatedAt = updatedAt
 	r.nextCmtID++
-	c.ID, c.OwnerUserID, c.TicketID = r.nextCmtID, user, t.ID
+	c.ID, c.OwnerUserID, c.TicketID = r.nextCmtID, user, id
 	e.comments = append(e.comments, c)
 	return e.snapshot(), nil
 }
@@ -118,26 +118,10 @@ func (e *entry) commentIndex(id uint64) int {
 	return slices.IndexFunc(e.comments, func(c tickets.Comment) bool { return c.ID == id })
 }
 
-func (r *Repository) UpdateComment(_ context.Context, user string, t tickets.Ticket, c tickets.Comment) (tickets.Ticket, error) {
+func (r *Repository) UpdateComment(_ context.Context, user string, id, commentID uint64, actor tickets.Actor, now func() time.Time, body string) (tickets.Ticket, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e, err := r.get(user, t.ID)
-	if err != nil {
-		return tickets.Ticket{}, err
-	}
-	i := e.commentIndex(c.ID)
-	if i < 0 {
-		return tickets.Ticket{}, tickets.ErrCommentNotFound
-	}
-	e, _ = r.update(user, t)
-	e.comments[i].Body = c.Body
-	return e.snapshot(), nil
-}
-
-func (r *Repository) DeleteComment(_ context.Context, user string, t tickets.Ticket, commentID uint64) (tickets.Ticket, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	e, err := r.get(user, t.ID)
+	e, err := r.get(user, id)
 	if err != nil {
 		return tickets.Ticket{}, err
 	}
@@ -145,7 +129,29 @@ func (r *Repository) DeleteComment(_ context.Context, user string, t tickets.Tic
 	if i < 0 {
 		return tickets.Ticket{}, tickets.ErrCommentNotFound
 	}
-	e, _ = r.update(user, t)
+	if e.comments[i].CreatedBy.ID != actor.ID {
+		return tickets.Ticket{}, tickets.ErrCommentPermissionDenied
+	}
+	e.ticket.UpdatedBy, e.ticket.UpdatedAt = actor, now().UTC()
+	e.comments[i].Body = body
+	return e.snapshot(), nil
+}
+
+func (r *Repository) DeleteComment(_ context.Context, user string, id, commentID uint64, actor tickets.Actor, now func() time.Time) (tickets.Ticket, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, err := r.get(user, id)
+	if err != nil {
+		return tickets.Ticket{}, err
+	}
+	i := e.commentIndex(commentID)
+	if i < 0 {
+		return tickets.Ticket{}, tickets.ErrCommentNotFound
+	}
+	if e.comments[i].CreatedBy.ID != actor.ID {
+		return tickets.Ticket{}, tickets.ErrCommentPermissionDenied
+	}
+	e.ticket.UpdatedBy, e.ticket.UpdatedAt = actor, now().UTC()
 	e.comments = slices.Delete(e.comments, i, i+1)
 	return e.snapshot(), nil
 }
