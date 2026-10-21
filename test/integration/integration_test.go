@@ -60,6 +60,14 @@ func ensureUp(t *testing.T, db *sql.DB) {
 	}
 }
 
+// resetBusinessTables は組織を参照する業務データを、外部キーの依存順に削除する。
+func resetBusinessTables(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`DELETE FROM ticket_comments; DELETE FROM ticket_histories; DELETE FROM tickets; DELETE FROM tasks; DELETE FROM invoices; DELETE FROM deals; DELETE FROM customers; DELETE FROM organization_members; DELETE FROM organizations`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func requirePGCode(t *testing.T, err error, want string) {
 	t.Helper()
 	if err == nil {
@@ -77,9 +85,7 @@ func TestMigrationRoundTripUsesSchemaSQL(t *testing.T) {
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`DELETE FROM tasks; DELETE FROM invoices; DELETE FROM deals; DELETE FROM customers; DELETE FROM organization_members; DELETE FROM organizations`); err != nil {
-		t.Fatal(err)
-	}
+	resetBusinessTables(t, db)
 	if err := m.Steps(-1); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +103,7 @@ func TestMigrationRoundTripUsesSchemaSQL(t *testing.T) {
 func TestOrganizationIsolationAndCompositeForeignKey(t *testing.T) {
 	db := openDB(t)
 	ensureUp(t, db)
-	_, _ = db.Exec(`DELETE FROM tasks; DELETE FROM invoices; DELETE FROM deals; DELETE FROM customers; DELETE FROM organization_members; DELETE FROM organizations`)
+	resetBusinessTables(t, db)
 	ctx := context.Background()
 	organizationA, organizationB := uuid.New(), uuid.New()
 	customerA, customerB := uuid.New(), uuid.New()
@@ -142,7 +148,7 @@ func TestOrganizationIsolationAndCompositeForeignKey(t *testing.T) {
 func TestInvoiceOwnerUniqueAndLockedTransition(t *testing.T) {
 	db := openDB(t)
 	ensureUp(t, db)
-	_, _ = db.Exec(`DELETE FROM invoices; DELETE FROM customers; DELETE FROM organization_members; DELETE FROM organizations`)
+	resetBusinessTables(t, db)
 	organizationID := uuid.New()
 	if _, err := db.Exec(`INSERT INTO organizations (id, name, created_at, updated_at) VALUES ($1,'user-a',now(),now())`, organizationID); err != nil {
 		t.Fatal(err)

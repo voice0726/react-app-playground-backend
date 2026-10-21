@@ -1,6 +1,10 @@
 package tickets
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type Status string
 
@@ -33,28 +37,29 @@ type Actor struct {
 }
 
 type Ticket struct {
-	ID          uint64 `gorm:"primaryKey;autoIncrement"`
-	OwnerUserID string
-	Title       string
-	Status      Status
-	Assignee    *string
-	CreatedBy   Actor `gorm:"embedded;embeddedPrefix:created_by_"`
-	UpdatedBy   Actor `gorm:"embedded;embeddedPrefix:updated_by_"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	History     []HistoryItem `gorm:"-"`
-	Comments    []Comment     `gorm:"-"`
+	ID             uint64 `gorm:"primaryKey;autoIncrement"`
+	OrganizationID uuid.UUID
+	OwnerUserID    string
+	Title          string
+	Status         Status
+	Assignee       *string
+	CreatedBy      Actor `gorm:"embedded;embeddedPrefix:created_by_"`
+	UpdatedBy      Actor `gorm:"embedded;embeddedPrefix:updated_by_"`
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	History        []HistoryItem `gorm:"-"`
+	Comments       []Comment     `gorm:"-"`
 }
 
 func (Ticket) TableName() string { return "tickets" }
 
 type Comment struct {
-	ID          uint64 `gorm:"primaryKey;autoIncrement"`
-	OwnerUserID string
-	TicketID    uint64
-	Body        string
-	CreatedBy   Actor `gorm:"embedded;embeddedPrefix:created_by_"`
-	CreatedAt   time.Time
+	ID             uint64 `gorm:"primaryKey;autoIncrement"`
+	OrganizationID uuid.UUID
+	TicketID       uint64
+	Body           string
+	CreatedBy      Actor `gorm:"embedded;embeddedPrefix:created_by_"`
+	CreatedAt      time.Time
 }
 
 func (Comment) TableName() string { return "ticket_comments" }
@@ -79,15 +84,15 @@ type HistoryItem struct {
 
 // historyRecord は ticket_histories の 1 行(1 フィールドの差分)。
 type historyRecord struct {
-	ID          uint64 `gorm:"primaryKey;autoIncrement"`
-	OwnerUserID string
-	TicketID    uint64
-	OperationID string
-	Field       string
-	BeforeValue *string
-	AfterValue  *string
-	ChangedBy   Actor `gorm:"embedded;embeddedPrefix:changed_by_"`
-	ChangedAt   time.Time
+	ID             uint64 `gorm:"primaryKey;autoIncrement"`
+	OrganizationID uuid.UUID
+	TicketID       uint64
+	OperationID    string
+	Field          string
+	BeforeValue    *string
+	AfterValue     *string
+	ChangedBy      Actor `gorm:"embedded;embeddedPrefix:changed_by_"`
+	ChangedAt      time.Time
 }
 
 func (historyRecord) TableName() string { return "ticket_histories" }

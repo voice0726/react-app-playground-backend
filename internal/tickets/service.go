@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/voice0726/react-app-playground-backend/internal/shared/httperror"
 )
 
@@ -49,8 +50,8 @@ func NewService(repo Repository) *Service {
 	return &Service{repo: repo, now: currentTimestamp, generateOperationID: newOperationID}
 }
 
-func (s *Service) List(ctx context.Context, user string, query ListQuery) (ListResult, error) {
-	items, err := s.repo.List(ctx, user)
+func (s *Service) List(ctx context.Context, organizationID uuid.UUID, query ListQuery) (ListResult, error) {
+	items, err := s.repo.List(ctx, organizationID)
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -59,15 +60,15 @@ func (s *Service) List(ctx context.Context, user string, query ListQuery) (ListR
 	return ListResult{Items: paginate(filtered, query.Page, query.PageSize), Total: len(filtered)}, nil
 }
 
-func (s *Service) Find(ctx context.Context, user string, id string) (Ticket, error) {
+func (s *Service) Find(ctx context.Context, organizationID uuid.UUID, id string) (Ticket, error) {
 	parsed, err := parseID(id, ErrNotFound)
 	if err != nil {
 		return Ticket{}, err
 	}
-	return s.repo.Find(ctx, user, parsed)
+	return s.repo.Find(ctx, organizationID, parsed)
 }
 
-func (s *Service) Create(ctx context.Context, actor Actor, p CreateParams) (Ticket, error) {
+func (s *Service) Create(ctx context.Context, organizationID uuid.UUID, actor Actor, p CreateParams) (Ticket, error) {
 	title, ok := normalizeTitle(p.Title)
 	if !ok {
 		return Ticket{}, ErrInvalidTitle
@@ -77,13 +78,13 @@ func (s *Service) Create(ctx context.Context, actor Actor, p CreateParams) (Tick
 		return Ticket{}, ErrInvalidStatus
 	}
 	now := s.now()
-	return s.repo.Create(ctx, actor.ID, Ticket{
-		Title: title, Status: status, Assignee: normalizeAssignee(p.Assignee),
+	return s.repo.Create(ctx, organizationID, Ticket{
+		OwnerUserID: actor.ID, Title: title, Status: status, Assignee: normalizeAssignee(p.Assignee),
 		CreatedBy: actor, UpdatedBy: actor, CreatedAt: now, UpdatedAt: now,
 	})
 }
 
-func (s *Service) Replace(ctx context.Context, actor Actor, id string, p ReplaceParams) (Ticket, error) {
+func (s *Service) Replace(ctx context.Context, organizationID uuid.UUID, actor Actor, id string, p ReplaceParams) (Ticket, error) {
 	title, ok := normalizeTitle(p.Title)
 	if !ok {
 		return Ticket{}, ErrInvalidTitle
@@ -96,19 +97,19 @@ func (s *Service) Replace(ctx context.Context, actor Actor, id string, p Replace
 	if err != nil {
 		return Ticket{}, err
 	}
-	return s.repo.UpdateLocked(ctx, actor.ID, parsed, func(existing Ticket) (Ticket, []HistoryItem, error) {
+	return s.repo.UpdateLocked(ctx, organizationID, parsed, func(existing Ticket) (Ticket, []HistoryItem, error) {
 		previous := existing.Status
 		existing.Title, existing.Status, existing.Assignee = title, status, normalizeAssignee(p.Assignee)
 		return s.prepareUpdate(actor, existing, previous)
 	})
 }
 
-func (s *Service) Patch(ctx context.Context, actor Actor, id string, p PatchParams) (Ticket, error) {
+func (s *Service) Patch(ctx context.Context, organizationID uuid.UUID, actor Actor, id string, p PatchParams) (Ticket, error) {
 	parsed, err := parseID(id, ErrNotFound)
 	if err != nil {
 		return Ticket{}, err
 	}
-	return s.repo.UpdateLocked(ctx, actor.ID, parsed, func(existing Ticket) (Ticket, []HistoryItem, error) {
+	return s.repo.UpdateLocked(ctx, organizationID, parsed, func(existing Ticket) (Ticket, []HistoryItem, error) {
 		previous := existing.Status
 		if p.Title.Set {
 			title, ok := normalizeTitle(p.Title.String())
@@ -134,15 +135,15 @@ func (s *Service) Patch(ctx context.Context, actor Actor, id string, p PatchPara
 	})
 }
 
-func (s *Service) Delete(ctx context.Context, user string, id string) error {
+func (s *Service) Delete(ctx context.Context, organizationID uuid.UUID, id string) error {
 	parsed, err := parseID(id, ErrNotFound)
 	if err != nil {
 		return err
 	}
-	return s.repo.Delete(ctx, user, parsed)
+	return s.repo.Delete(ctx, organizationID, parsed)
 }
 
-func (s *Service) AddComment(ctx context.Context, actor Actor, id string, body string) (Ticket, error) {
+func (s *Service) AddComment(ctx context.Context, organizationID uuid.UUID, actor Actor, id string, body string) (Ticket, error) {
 	ticketID, err := parseID(id, ErrNotFound)
 	if err != nil {
 		return Ticket{}, err
@@ -151,10 +152,10 @@ func (s *Service) AddComment(ctx context.Context, actor Actor, id string, body s
 	if !ok {
 		return Ticket{}, ErrInvalidCommentBody
 	}
-	return s.repo.AddComment(ctx, actor.ID, ticketID, actor, s.now, Comment{Body: text, CreatedBy: actor})
+	return s.repo.AddComment(ctx, organizationID, ticketID, actor, s.now, Comment{Body: text, CreatedBy: actor})
 }
 
-func (s *Service) UpdateComment(ctx context.Context, actor Actor, id string, commentID string, body string) (Ticket, error) {
+func (s *Service) UpdateComment(ctx context.Context, organizationID uuid.UUID, actor Actor, id string, commentID string, body string) (Ticket, error) {
 	ticketID, parsedComment, err := parseCommentIDs(id, commentID)
 	if err != nil {
 		return Ticket{}, err
@@ -163,15 +164,15 @@ func (s *Service) UpdateComment(ctx context.Context, actor Actor, id string, com
 	if !ok {
 		return Ticket{}, ErrInvalidCommentBody
 	}
-	return s.repo.UpdateComment(ctx, actor.ID, ticketID, parsedComment, actor, s.now, text)
+	return s.repo.UpdateComment(ctx, organizationID, ticketID, parsedComment, actor, s.now, text)
 }
 
-func (s *Service) DeleteComment(ctx context.Context, actor Actor, id string, commentID string) (Ticket, error) {
+func (s *Service) DeleteComment(ctx context.Context, organizationID uuid.UUID, actor Actor, id string, commentID string) (Ticket, error) {
 	ticketID, parsedComment, err := parseCommentIDs(id, commentID)
 	if err != nil {
 		return Ticket{}, err
 	}
-	return s.repo.DeleteComment(ctx, actor.ID, ticketID, parsedComment, actor, s.now)
+	return s.repo.DeleteComment(ctx, organizationID, ticketID, parsedComment, actor, s.now)
 }
 
 func (s *Service) prepareUpdate(actor Actor, ticket Ticket, previous Status) (Ticket, []HistoryItem, error) {
