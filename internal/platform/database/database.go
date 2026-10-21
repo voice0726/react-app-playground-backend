@@ -12,7 +12,7 @@ import (
 )
 
 func New(cfg config.Config, log *slog.Logger) (*gorm.DB, error) {
-	return gorm.Open(postgres.Open(cfg.DatabaseURL), &gorm.Config{Logger: newLogger(log)})
+	return gorm.Open(postgres.Open(cfg.DatabaseURL), &gorm.Config{Logger: newLogger(log), DisableAutomaticPing: true})
 }
 func Ping(ctx context.Context, db *gorm.DB) error {
 	sqlDB, err := db.DB()

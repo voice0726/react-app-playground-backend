@@ -1,0 +1,53 @@
+#!/bin/bash
+set -euo pipefail
+
+exec > >(tee -a /var/log/react-app-playground-backend-db-startup.log | logger -t react-app-playground-backend-db) 2>&1
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y postgresql curl python3
+
+access_token="$(curl -fsS \
+  -H 'Metadata-Flavor: Google' \
+  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])')"
+secret_response="$(curl -fsS --retry 12 --retry-delay 5 --retry-all-errors \
+  -H "Authorization: Bearer $access_token" \
+  "https://secretmanager.googleapis.com/v1/${secret_name}/versions/latest:access")"
+db_password="$(printf '%s' "$secret_response" | python3 -c 'import base64, json, sys; print(base64.b64decode(json.load(sys.stdin)["payload"]["data"]).decode())')"
+unset access_token secret_response
+
+pg_version="$(find /etc/postgresql -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1)"
+pg_config_dir="/etc/postgresql/$pg_version/main"
+
+cat > "$pg_config_dir/conf.d/react-app-playground-backend.conf" <<EOF
+listen_addresses = '${db_internal_ip},localhost'
+password_encryption = 'scram-sha-256'
+EOF
+
+python3 - "$pg_config_dir/pg_hba.conf" "${cloud_run_subnet_cidr}" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+cloud_run_subnet_cidr = sys.argv[2]
+new_rules = [
+    f"host playground playground {cloud_run_subnet_cidr} scram-sha-256",
+]
+lines = [line for line in path.read_text().splitlines() if line not in set(new_rules)]
+path.write_text("\n".join([*lines, *new_rules]) + "\n")
+PY
+
+systemctl enable postgresql
+systemctl restart postgresql
+
+if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'playground'" | grep -qx 1; then
+  runuser -u postgres -- createuser playground
+fi
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 \
+  -c "ALTER ROLE playground WITH LOGIN PASSWORD '$db_password'"
+if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'playground'" | grep -qx 1; then
+  runuser -u postgres -- createdb --owner=playground playground
+fi
+
+unset db_password

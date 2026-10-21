@@ -86,7 +86,7 @@ func TestMigrationRoundTripUsesSchemaSQL(t *testing.T) {
 	if err := m.Up(); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"organizations", "organization_members", "customers", "deals", "invoices", "tasks"} {
+	for _, table := range []string{"organizations", "organization_members", "customers", "deals", "invoices", "tasks", "tickets", "ticket_histories", "ticket_comments"} {
 		var exists bool
 		if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=$1)`, table).Scan(&exists); err != nil || !exists {
 			t.Fatalf("table %s was not recreated: %v", table, err)
@@ -136,7 +136,7 @@ func TestOrganizationIsolationAndCompositeForeignKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := db.ExecContext(ctx, `DELETE FROM customers WHERE id=$1 AND organization_id=$2`, customerA, organizationA)
-	requirePGCode(t, err, "23503")
+	requirePGCode(t, err, "23001")
 }
 
 func TestInvoiceOwnerUniqueAndLockedTransition(t *testing.T) {
@@ -173,7 +173,7 @@ func TestInvoiceOwnerUniqueAndLockedTransition(t *testing.T) {
 			}
 			var current string
 			err = tx.QueryRow(`SELECT status FROM invoices WHERE id=$1 AND organization_id=$2 FOR UPDATE`, invoiceID, organizationID).Scan(&current)
-			if err == nil && ((next == "sent" && current == "draft") || (next == "paid" && current == "sent")) {
+			if err == nil && next == "sent" && current == "draft" {
 				_, err = tx.Exec(`UPDATE invoices SET status=$1, updated_at=now() WHERE id=$2 AND organization_id=$3`, next, invoiceID, organizationID)
 			} else {
 				err = errors.New("invalid transition")
@@ -202,5 +202,5 @@ func TestInvoiceOwnerUniqueAndLockedTransition(t *testing.T) {
 		t.Fatalf("final invoice status=%q err=%v", status, err)
 	}
 	_, err = db.Exec(`DELETE FROM customers WHERE id=$1 AND organization_id=$2`, customerID, organizationID)
-	requirePGCode(t, err, "23503")
+	requirePGCode(t, err, "23001")
 }

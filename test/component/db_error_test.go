@@ -28,7 +28,7 @@ func (constraintCustomerRepository) Update(context.Context, uuid.UUID, uuid.UUID
 	return customer.Customer{}, nil
 }
 func (constraintCustomerRepository) Delete(context.Context, uuid.UUID, uuid.UUID) error {
-	return dberror.Classify(&pgconn.PgError{Code: "23503", Message: "referenced customer"})
+	return dberror.Classify(&pgconn.PgError{Code: "23001", Message: "referenced customer"})
 }
 
 func TestClassifiedCustomerDeleteConstraintIsHTTP409(t *testing.T) {

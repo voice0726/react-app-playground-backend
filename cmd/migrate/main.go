@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -11,6 +13,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/voice0726/react-app-playground-backend/internal/config"
+	"github.com/voice0726/react-app-playground-backend/internal/platform/database"
 )
 
 func main() {
@@ -30,11 +33,21 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: migrate up|down 1|version")
 	}
+	connectionTimeout, err := database.ConnectionTimeout()
+	if err != nil {
+		return err
+	}
 	db, err := sql.Open("pgx", url)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+	err = database.WaitForConnection(ctx, db, slog.Default())
+	cancel()
+	if err != nil {
+		return err
+	}
 	driver, err := postgres.WithInstance(db, &postgres.Config{})
 	if err != nil {
 		return err

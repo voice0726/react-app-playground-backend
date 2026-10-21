@@ -1,3 +1,11 @@
+.git
+/config
+*.pat
 .env
 .env.*
 !.env.example
+infra
+bin
+test-results
+storage-state
+coverage.out

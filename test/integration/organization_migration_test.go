@@ -73,10 +73,10 @@ func TestOrganizationMigrationPreservesLegacyDataAndBlocksUnsafeRollback(t *test
 		t.Fatal("rollback of a newly-created organization unexpectedly succeeded")
 	}
 	version, dirty, err := m.Version()
-	if err != nil || version != 1 || !dirty {
+	if err != nil || version != 2 || !dirty {
 		t.Fatalf("failed new organization rollback version=%d dirty=%t err=%v", version, dirty, err)
 	}
-	if err := m.Force(2); err != nil {
+	if err := m.Force(3); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`DELETE FROM organization_members WHERE organization_id=$1`, newOrganizationID); err != nil {
@@ -93,10 +93,10 @@ func TestOrganizationMigrationPreservesLegacyDataAndBlocksUnsafeRollback(t *test
 		t.Fatal("unsafe rollback unexpectedly succeeded")
 	}
 	version, dirty, err = m.Version()
-	if err != nil || version != 1 || !dirty {
+	if err != nil || version != 2 || !dirty {
 		t.Fatalf("failed rollback version=%d dirty=%t err=%v", version, dirty, err)
 	}
-	if err := m.Force(2); err != nil {
+	if err := m.Force(3); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`DELETE FROM tasks; DELETE FROM invoices; DELETE FROM deals; DELETE FROM customers; DELETE FROM organization_members; DELETE FROM organizations`); err != nil {

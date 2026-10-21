@@ -1,6 +1,8 @@
 package component
 
 import (
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -51,6 +53,85 @@ func TestHealthAndReadiness(t *testing.T) {
 		if res.Code != tc.want {
 			t.Fatalf("%s: status=%d, want=%d", tc.path, res.Code, tc.want)
 		}
+	}
+}
+
+func TestHTTPErrorHandlerContracts(t *testing.T) {
+	s := newServer(t, http.StatusOK, `{"user_id":"u1","name":"User","email":"u@example.com"}`)
+	s.Echo.GET("/echo-error", func(c *echo.Context) error {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid query.")
+	})
+	s.Echo.GET("/wrapped-echo-error", func(c *echo.Context) error {
+		return fmt.Errorf("route failed: %w", echo.NewHTTPError(http.StatusNotFound, "Record not found."))
+	})
+	s.Echo.GET("/echo-internal-error", func(c *echo.Context) error {
+		return echo.NewHTTPError(http.StatusInternalServerError, "private echo detail")
+	})
+	s.Echo.GET("/echo-bad-gateway", func(c *echo.Context) error {
+		return echo.NewHTTPError(http.StatusBadGateway, "private upstream detail")
+	})
+	s.Echo.GET("/invalid-echo-status", func(c *echo.Context) error {
+		return echo.NewHTTPError(http.StatusMovedPermanently, "private invalid status detail")
+	})
+	s.Echo.GET("/domain-error", func(c *echo.Context) error {
+		return httperror.New(httperror.Validation, "invalid_input", "Input is invalid.", nil)
+	})
+	s.Echo.GET("/internal-error", func(c *echo.Context) error {
+		return httperror.New(httperror.Internal, "internal_error", "Internal server error.", fmt.Errorf("private database detail"))
+	})
+	s.Echo.GET("/committed-error", func(c *echo.Context) error {
+		if err := c.String(http.StatusAccepted, "response already sent"); err != nil {
+			return err
+		}
+		return fmt.Errorf("error after response was sent")
+	})
+	s.Echo.GET("/plain-error", func(c *echo.Context) error {
+		return fmt.Errorf("private plain error detail")
+	})
+
+	for _, tc := range []struct {
+		name, method, path, wantCode, wantMessage, forbidden string
+		wantStatus                                           int
+	}{
+		{name: "missing route", method: http.MethodGet, path: "/missing", wantStatus: http.StatusNotFound, wantCode: "not_found", wantMessage: "Not Found"},
+		{name: "unsupported method", method: http.MethodPost, path: "/healthz", wantStatus: http.StatusMethodNotAllowed, wantCode: "method_not_allowed", wantMessage: "Method Not Allowed"},
+		{name: "echo http error", method: http.MethodGet, path: "/echo-error", wantStatus: http.StatusBadRequest, wantCode: "bad_request", wantMessage: "Invalid query."},
+		{name: "wrapped echo error", method: http.MethodGet, path: "/wrapped-echo-error", wantStatus: http.StatusNotFound, wantCode: "not_found", wantMessage: "Record not found."},
+		{name: "echo internal error", method: http.MethodGet, path: "/echo-internal-error", wantStatus: http.StatusInternalServerError, wantCode: "internal_error", wantMessage: "Internal server error.", forbidden: "private echo detail"},
+		{name: "echo bad gateway", method: http.MethodGet, path: "/echo-bad-gateway", wantStatus: http.StatusBadGateway, wantCode: "bad_gateway", wantMessage: "Bad Gateway", forbidden: "private upstream detail"},
+		{name: "invalid echo status", method: http.MethodGet, path: "/invalid-echo-status", wantStatus: http.StatusInternalServerError, wantCode: "internal_error", wantMessage: "Internal server error.", forbidden: "private invalid status detail"},
+		{name: "domain error", method: http.MethodGet, path: "/domain-error", wantStatus: http.StatusBadRequest, wantCode: "invalid_input", wantMessage: "Input is invalid."},
+		{name: "internal error", method: http.MethodGet, path: "/internal-error", wantStatus: http.StatusInternalServerError, wantCode: "internal_error", wantMessage: "Internal server error.", forbidden: "private database detail"},
+		{name: "plain error", method: http.MethodGet, path: "/plain-error", wantStatus: http.StatusInternalServerError, wantCode: "internal_error", wantMessage: "Internal server error.", forbidden: "private plain error detail"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := httptest.NewRecorder()
+			s.Echo.ServeHTTP(res, httptest.NewRequest(tc.method, tc.path, nil))
+			if res.Code != tc.wantStatus {
+				t.Fatalf("status=%d, want=%d body=%s", res.Code, tc.wantStatus, res.Body.String())
+			}
+			var body struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode error response: %v", err)
+			}
+			if body.Error.Code != tc.wantCode || body.Error.Message != tc.wantMessage {
+				t.Fatalf("error=%+v, want code=%q message=%q", body.Error, tc.wantCode, tc.wantMessage)
+			}
+			if tc.forbidden != "" && strings.Contains(res.Body.String(), tc.forbidden) {
+				t.Fatalf("response leaked internal detail %q: %s", tc.forbidden, res.Body.String())
+			}
+		})
+	}
+
+	res := httptest.NewRecorder()
+	s.Echo.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/committed-error", nil))
+	if res.Code != http.StatusAccepted || res.Body.String() != "response already sent" {
+		t.Fatalf("committed response changed: status=%d body=%q", res.Code, res.Body.String())
 	}
 }
 
