@@ -1,3 +1,6 @@
+-- 安全確認からスキーマ変更の完了まで、確認対象への書き込みを防ぎます。
+LOCK TABLE organizations, organization_members, customers, deals, invoices, tasks IN ACCESS EXCLUSIVE MODE;
+
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM organizations) AND EXISTS (
