@@ -3,8 +3,11 @@
 package integration
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/google/uuid"
@@ -103,4 +106,160 @@ func TestTicketOrganizationMigrationPreservesLegacyTicketsAndBlocksUnsafeRollbac
 		t.Fatalf("re-applied organization=%s want=%s err=%v", mapped, ticketOnlyOrganizationID, err)
 	}
 	resetBusinessTables(t, db)
+}
+
+func TestTicketOrganizationMigrationKeepsExistingOrganizationMembership(t *testing.T) {
+	db := openDB(t)
+	m := migrateDB(t, db)
+	ensureUp(t, db)
+	resetBusinessTables(t, db)
+	if err := m.Migrate(2); err != nil {
+		t.Fatal(err)
+	}
+
+	owner := "removed-owner"
+	if _, err := db.Exec(`INSERT INTO customers (id, owner_user_id, name, email, phone, status, created_at, updated_at) VALUES ($1,$2,'legacy','legacy@example.com','1','active',now(),now())`, uuid.New(), owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Migrate(3); err != nil {
+		t.Fatal(err)
+	}
+	// 000003 で作られた個別組織から所有者を外した後に、000004 が所有者の権限を戻さないことを確かめる。
+	var organizationID uuid.UUID
+	if err := db.QueryRow(`SELECT md5('react-app-playground:organization:' || $1::text)::uuid`, owner).Scan(&organizationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO organization_members (organization_id, user_id, role, created_at, updated_at) VALUES ($1,'successor-admin','admin',now(),now())`, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM organization_members WHERE organization_id=$1 AND user_id=$2`, organizationID, owner); err != nil {
+		t.Fatal(err)
+	}
+	var ticketID uint64
+	if err := db.QueryRow(`INSERT INTO tickets (owner_user_id, title, status, created_by_id, created_by_name, created_by_email, updated_by_id, updated_by_name, updated_by_email, created_at, updated_at) VALUES ($1,'legacy','open',$1,$1,$1,$1,$1,$1,now(),now()) RETURNING id`, owner).Scan(&ticketID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.Up(); err != nil {
+		t.Fatal(err)
+	}
+	var mapped uuid.UUID
+	if err := db.QueryRow(`SELECT organization_id FROM tickets WHERE id=$1`, ticketID).Scan(&mapped); err != nil || mapped != organizationID {
+		t.Fatalf("ticket organization=%s want=%s err=%v", mapped, organizationID, err)
+	}
+	rows, err := db.Query(`SELECT user_id || ':' || role FROM organization_members WHERE organization_id=$1 ORDER BY user_id`, organizationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var members []string
+	for rows.Next() {
+		var member string
+		if err := rows.Scan(&member); err != nil {
+			t.Fatal(err)
+		}
+		members = append(members, member)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 1 || members[0] != "successor-admin:admin" {
+		t.Fatalf("organization members=%v, want only successor-admin:admin", members)
+	}
+	resetBusinessTables(t, db)
+}
+
+func TestTicketOrganizationRollbackBlocksConcurrentSharing(t *testing.T) {
+	db := openDB(t)
+	m := migrateDB(t, db)
+	ensureUp(t, db)
+	resetBusinessTables(t, db)
+	if err := m.Migrate(2); err != nil {
+		t.Fatal(err)
+	}
+	owner := "rollback-owner"
+	if _, err := db.Exec(`INSERT INTO tickets (owner_user_id, title, status, created_by_id, created_by_name, created_by_email, updated_by_id, updated_by_name, updated_by_email, created_at, updated_at) VALUES ($1,'legacy','open',$1,$1,$1,$1,$1,$1,now(),now())`, owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil {
+		t.Fatal(err)
+	}
+	var ownerOrganizationID uuid.UUID
+	if err := db.QueryRow(`SELECT organization_id FROM tickets WHERE owner_user_id=$1`, owner).Scan(&ownerOrganizationID); err != nil {
+		t.Fatal(err)
+	}
+	sharedOrganizationID := uuid.New()
+	if _, err := db.Exec(`INSERT INTO organizations (id, name, created_at, updated_at) VALUES ($1,'shared',now(),now())`, sharedOrganizationID); err != nil {
+		t.Fatal(err)
+	}
+
+	// ticket_histories のロックで down を安全確認の後に止め、その間の共有操作が待たされることを確かめる。
+	ctx := context.Background()
+	blocker, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback()
+	if _, err := blocker.ExecContext(ctx, `LOCK TABLE ticket_histories IN ACCESS SHARE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	rollback := make(chan error, 1)
+	go func() { rollback <- m.Steps(-1) }()
+	waitForUngrantedLock(t, db, "ticket_histories")
+
+	err = execWithLockTimeout(ctx, db, `INSERT INTO organization_members (organization_id, user_id, role, created_at, updated_at) VALUES ($1,'editor-user','editor',now(),now())`, ownerOrganizationID)
+	requirePGCode(t, err, "55P03")
+	err = execWithLockTimeout(ctx, db, `INSERT INTO tickets (organization_id, owner_user_id, title, status, created_by_id, created_by_name, created_by_email, updated_by_id, updated_by_name, updated_by_email, created_at, updated_at) VALUES ($1,'shared-user','shared','open','a','a','a','a','a','a',now(),now())`, sharedOrganizationID)
+	requirePGCode(t, err, "55P03")
+
+	if err := blocker.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-rollback:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("rollback did not finish after the blocker was released")
+	}
+	version, dirty, err := m.Version()
+	if err != nil || version != 3 || dirty {
+		t.Fatalf("rollback version=%d dirty=%t err=%v", version, dirty, err)
+	}
+	if err := m.Up(); err != nil {
+		t.Fatal(err)
+	}
+	resetBusinessTables(t, db)
+}
+
+func waitForUngrantedLock(t *testing.T, db *sql.DB, table string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting bool
+		if err := db.QueryRow(`SELECT EXISTS (SELECT 1 FROM pg_locks WHERE relation = to_regclass($1) AND NOT granted)`, table).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("no session waited for a lock on %s", table)
+}
+
+func execWithLockTimeout(ctx context.Context, db *sql.DB, query string, args ...any) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `SET LOCAL lock_timeout = '500ms'`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

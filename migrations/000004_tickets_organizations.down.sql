@@ -1,3 +1,6 @@
+-- 安全確認から organization_id の削除までの間に、共有メンバーの追加や組織へのチケット作成が割り込まないようにする。
+LOCK TABLE tickets, organization_members IN SHARE ROW EXCLUSIVE MODE;
+
 DO $$
 BEGIN
   IF EXISTS (
