@@ -22,12 +22,13 @@ func TestInvoiceDatePatchValidationIsHTTP400(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			id := uuid.New()
 			invoices := &invoiceFake{values: map[string]invoice.Invoice{
-				"u1" + id.String(): {ID: id, OwnerUserID: "u1", IssueDate: mustInvoiceDate("2026-01-01"), DueDate: mustInvoiceDate("2026-01-02"), Status: "draft"},
+				componentOrganizationID.String() + id.String(): {ID: id, OrganizationID: componentOrganizationID, OwnerUserID: "u1", IssueDate: mustInvoiceDate("2026-01-01"), DueDate: mustInvoiceDate("2026-01-02"), Status: "draft"},
 			}}
 			s := newServer(t, http.StatusOK, `{"user_id":"u1","name":"User","email":"u@example.com"}`)
 			s.Register(invoice.NewHandler(invoice.NewService(invoices, nil)))
 			req := httptest.NewRequest(http.MethodPatch, "/api/invoices/"+id.String(), strings.NewReader(tc.body))
 			req.Header.Set("Cookie", "session=component")
+			req.Header.Set("X-Organization-ID", componentOrganizationID.String())
 			req.Header.Set("Origin", "http://localhost:5173")
 			req.Header.Set("Content-Type", "application/json")
 			res := httptest.NewRecorder()
@@ -35,7 +36,7 @@ func TestInvoiceDatePatchValidationIsHTTP400(t *testing.T) {
 			if res.Code != http.StatusBadRequest {
 				t.Fatalf("status=%d body=%s, want 400", res.Code, res.Body.String())
 			}
-			if invoices.values["u1"+id.String()].IssueDate != mustInvoiceDate("2026-01-01") || invoices.values["u1"+id.String()].DueDate != mustInvoiceDate("2026-01-02") {
+			if invoices.values[componentOrganizationID.String()+id.String()].IssueDate != mustInvoiceDate("2026-01-01") || invoices.values[componentOrganizationID.String()+id.String()].DueDate != mustInvoiceDate("2026-01-02") {
 				t.Fatal("invalid date patch changed the invoice")
 			}
 		})

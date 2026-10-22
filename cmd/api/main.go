@@ -11,8 +11,10 @@ import (
 
 	"github.com/voice0726/react-app-playground-backend/internal/config"
 	"github.com/voice0726/react-app-playground-backend/internal/customer"
+	"github.com/voice0726/react-app-playground-backend/internal/dashboard"
 	"github.com/voice0726/react-app-playground-backend/internal/deal"
 	"github.com/voice0726/react-app-playground-backend/internal/invoice"
+	"github.com/voice0726/react-app-playground-backend/internal/organization"
 	"github.com/voice0726/react-app-playground-backend/internal/platform/authgateway"
 	"github.com/voice0726/react-app-playground-backend/internal/platform/database"
 	"github.com/voice0726/react-app-playground-backend/internal/platform/httpserver"
@@ -59,13 +61,16 @@ func run() int {
 		logger.Error("database unavailable", "error", err.Error())
 		return 1
 	}
-	server := httpserver.New(cfg, db, logger, authgateway.NewClient(cfg))
+	organizationService := organization.NewService(organization.NewRepository(db))
+	server := httpserver.New(cfg, db, logger, authgateway.NewClient(cfg), organizationService)
 	customerService := customer.NewService(customer.NewRepository(db))
 	server.Register(
+		organization.NewHandler(organizationService),
 		customer.NewHandler(customerService),
 		deal.NewHandler(deal.NewService(deal.NewRepository(db), customerService)),
 		invoice.NewHandler(invoice.NewService(invoice.NewRepository(db), customerService)),
 		task.NewHandler(task.NewService(task.NewRepository(db))),
+		dashboard.NewHandler(db),
 		tickets.NewHandler(tickets.NewService(tickets.NewRepository(db))),
 	)
 	serverErrors := make(chan error, 1)

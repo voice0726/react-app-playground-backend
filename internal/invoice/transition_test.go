@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/voice0726/react-app-playground-backend/internal/shared/httperror"
+	"github.com/voice0726/react-app-playground-backend/internal/shared/orgcontext"
 )
 
 func TestCanTransition(t *testing.T) {
@@ -27,16 +28,16 @@ type dateValidationRepository struct {
 	updates int
 }
 
-func (r *dateValidationRepository) List(context.Context, string) ([]Invoice, error) {
-	return []Invoice{r.value}, nil
+func (r *dateValidationRepository) List(context.Context, uuid.UUID, ListOptions) ([]Invoice, int64, int64, error) {
+	return []Invoice{r.value}, 1, r.value.Amount, nil
 }
-func (r *dateValidationRepository) Find(context.Context, string, uuid.UUID) (Invoice, error) {
+func (r *dateValidationRepository) Find(context.Context, uuid.UUID, uuid.UUID) (Invoice, error) {
 	return r.value, nil
 }
-func (r *dateValidationRepository) Create(context.Context, string, Invoice) (Invoice, error) {
+func (r *dateValidationRepository) Create(context.Context, uuid.UUID, string, Invoice) (Invoice, error) {
 	return Invoice{}, nil
 }
-func (r *dateValidationRepository) UpdateLocked(_ context.Context, _ string, _ uuid.UUID, apply func(Invoice) (Invoice, error)) (Invoice, error) {
+func (r *dateValidationRepository) UpdateLocked(_ context.Context, _ uuid.UUID, _ uuid.UUID, apply func(Invoice) (Invoice, error)) (Invoice, error) {
 	next, err := apply(r.value)
 	if err != nil {
 		return r.value, err
@@ -44,6 +45,9 @@ func (r *dateValidationRepository) UpdateLocked(_ context.Context, _ string, _ u
 	r.value = next
 	r.updates++
 	return next, nil
+}
+func (r *dateValidationRepository) Summary(context.Context, uuid.UUID, time.Time, *uuid.UUID) (Summary, error) {
+	return Summary{}, nil
 }
 
 func TestUpdateRejectsEitherInvoiceDateOrder(t *testing.T) {
@@ -58,7 +62,7 @@ func TestUpdateRejectsEitherInvoiceDateOrder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &dateValidationRepository{value: Invoice{ID: id, OwnerUserID: "user-a", IssueDate: mustDate("2026-01-01"), DueDate: mustDate("2026-01-02"), Status: "draft"}}
 			service := NewService(repo, nil)
-			_, err := service.Update(context.Background(), "user-a", id, tc.patch)
+			_, err := service.Update(context.Background(), orgcontext.Scope{OrganizationID: uuid.New(), UserID: "user-a", Role: "admin"}, id, tc.patch)
 			httpErr, ok := err.(*httperror.Error)
 			if !ok || httpErr.Kind != httperror.Validation {
 				t.Fatalf("error=%v, want validation httperror", err)

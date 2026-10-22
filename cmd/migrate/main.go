@@ -12,6 +12,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/voice0726/react-app-playground-backend/internal/config"
 	"github.com/voice0726/react-app-playground-backend/internal/platform/database"
 )
 
@@ -22,6 +23,9 @@ func main() {
 	}
 }
 func run(args []string) error {
+	if err := config.LoadDotEnv(); err != nil {
+		return err
+	}
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		return errors.New("DATABASE_URL is required")

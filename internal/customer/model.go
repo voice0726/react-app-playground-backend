@@ -6,14 +6,15 @@ import (
 )
 
 type Customer struct {
-	ID          uuid.UUID `gorm:"type:uuid;primaryKey"`
-	OwnerUserID string    `gorm:"column:owner_user_id"`
-	Name        string
-	Email       string
-	Phone       string
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID             uuid.UUID `gorm:"type:uuid;primaryKey"`
+	OrganizationID uuid.UUID `gorm:"type:uuid;not null;index"`
+	OwnerUserID    string    `gorm:"column:owner_user_id"`
+	Name           string
+	Email          string
+	Phone          string
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 func (Customer) TableName() string { return "customers" }

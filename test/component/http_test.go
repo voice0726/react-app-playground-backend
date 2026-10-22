@@ -35,7 +35,7 @@ func newServer(t *testing.T, gatewayStatus int, gatewayBody string) *httpserver.
 	}))
 	t.Cleanup(gateway.Close)
 	cfg := config.Config{AuthGatewayURL: gateway.URL, AuthGatewayInternalToken: "component-token", AuthGatewayTimeout: time.Second, PublicOrigin: "http://localhost:5173"}
-	s := httpserver.New(cfg, nil, nilLogger(), authgateway.NewClient(cfg))
+	s := httpserver.New(cfg, nil, nilLogger(), authgateway.NewClient(cfg), componentOrganizationAuthorizer{})
 	return s
 }
 

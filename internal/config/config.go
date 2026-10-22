@@ -21,6 +21,9 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+	if err := LoadDotEnv(); err != nil {
+		return Config{}, err
+	}
 	get := func(key string) (string, error) {
 		v := os.Getenv(key)
 		if v == "" {

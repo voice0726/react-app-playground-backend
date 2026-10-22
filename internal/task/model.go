@@ -6,13 +6,14 @@ import (
 )
 
 type Task struct {
-	ID          uuid.UUID `gorm:"type:uuid;primaryKey"`
-	OwnerUserID string
-	Title       string
-	Description string
-	Status      string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID             uuid.UUID `gorm:"type:uuid;primaryKey"`
+	OrganizationID uuid.UUID `gorm:"type:uuid;not null;index"`
+	OwnerUserID    string
+	Title          string
+	Description    string
+	Status         string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 func (Task) TableName() string { return "tasks" }

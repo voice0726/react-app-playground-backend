@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: postgres://playground:playground@localhost:5432/playground?sslmode=disable
+      PLAYGROUND_INTEGRATION_ALLOW_RESET: "1"
     services:
       postgres:
         image: postgres:18.6
