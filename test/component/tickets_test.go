@@ -1,6 +1,7 @@
 package component
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,12 +10,33 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/voice0726/react-app-playground-backend/internal/config"
 	"github.com/voice0726/react-app-playground-backend/internal/platform/authgateway"
 	"github.com/voice0726/react-app-playground-backend/internal/platform/httpserver"
+	"github.com/voice0726/react-app-playground-backend/internal/shared/httperror"
 	"github.com/voice0726/react-app-playground-backend/internal/tickets"
 	"github.com/voice0726/react-app-playground-backend/internal/tickets/tickettest"
 )
+
+var ticketOtherOrganizationID = uuid.MustParse("22222222-2222-4222-8222-222222222222")
+
+// ticketOrganizationAuthorizer は user-a と user-c を共通の組織に、user-b を別の組織に所属させる。
+type ticketOrganizationAuthorizer struct{}
+
+func (ticketOrganizationAuthorizer) Role(_ context.Context, userID string, organizationID uuid.UUID) (string, error) {
+	roles := map[string]map[uuid.UUID]string{
+		"user-a": {componentOrganizationID: "admin"},
+		"user-b": {ticketOtherOrganizationID: "admin"},
+		"user-c": {componentOrganizationID: "editor"},
+		"user-v": {componentOrganizationID: "viewer"},
+	}
+	role, ok := roles[userID][organizationID]
+	if !ok {
+		return "", httperror.New(httperror.NotFound, "organization_not_found", "Organization not found.", nil)
+	}
+	return role, nil
+}
 
 type ticketAPI struct {
 	t      *testing.T
@@ -25,24 +47,33 @@ type ticketAPI struct {
 func newTicketAPI(t *testing.T) *ticketAPI {
 	t.Helper()
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user := "user-a"
-		if r.Header.Get("Cookie") == "session=b" {
-			user = "user-b"
-		}
+		user := "user-" + strings.TrimPrefix(r.Header.Get("Cookie"), "session=")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"user_id":"` + user + `","name":"Name ` + user + `","email":"` + user + `@example.com"}`))
 	}))
 	t.Cleanup(gateway.Close)
 	cfg := config.Config{AuthGatewayURL: gateway.URL, AuthGatewayInternalToken: "component-token", AuthGatewayTimeout: time.Second, PublicOrigin: "http://localhost:5173"}
-	s := httpserver.New(cfg, nil, nilLogger(), authgateway.NewClient(cfg))
+	s := httpserver.New(cfg, nil, nilLogger(), authgateway.NewClient(cfg), ticketOrganizationAuthorizer{})
 	s.Register(tickets.NewHandler(tickets.NewService(tickettest.NewRepository())))
 	return &ticketAPI{t: t, server: s, origin: cfg.PublicOrigin}
 }
 
+// do は session=b を別組織、それ以外を共通組織の利用者として送る。
 func (a *ticketAPI) do(cookie, method, path, body string) *httptest.ResponseRecorder {
+	organizationID := componentOrganizationID
+	if cookie == "session=b" {
+		organizationID = ticketOtherOrganizationID
+	}
+	return a.doIn(organizationID.String(), cookie, method, path, body)
+}
+
+func (a *ticketAPI) doIn(organizationID, cookie, method, path, body string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	if cookie != "" {
 		req.Header.Set("Cookie", cookie)
+	}
+	if organizationID != "" {
+		req.Header.Set("X-Organization-ID", organizationID)
 	}
 	req.Header.Set("Origin", a.origin)
 	req.Header.Set("Content-Type", "application/json")
@@ -147,7 +178,7 @@ func TestTicketsContractAndLifecycle(t *testing.T) {
 	}
 }
 
-func TestTicketsAreIsolatedPerUser(t *testing.T) {
+func TestTicketsAreIsolatedPerOrganization(t *testing.T) {
 	a := newTicketAPI(t)
 	a.json(a.do("session=a", http.MethodPost, "/api/tickets", `{"title":"private"}`), http.StatusCreated)
 
@@ -167,6 +198,42 @@ func TestTicketsAreIsolatedPerUser(t *testing.T) {
 		}
 	}
 	a.json(a.do("session=a", http.MethodGet, "/api/tickets/1", ""), http.StatusOK)
+
+	// 所属していない組織を指定しても他組織のチケットには届かない。
+	if res := a.doIn(componentOrganizationID.String(), "session=b", http.MethodGet, "/api/tickets/1", ""); res.Code != http.StatusNotFound || errorCode(t, res) != "organization_not_found" {
+		t.Fatalf("non-member: %d %s", res.Code, res.Body.String())
+	}
+}
+
+func TestTicketsAreSharedWithinOrganization(t *testing.T) {
+	a := newTicketAPI(t)
+	a.json(a.do("session=a", http.MethodPost, "/api/tickets", `{"title":"shared"}`), http.StatusCreated)
+
+	list := a.json(a.do("session=c", http.MethodGet, "/api/tickets", ""), http.StatusOK)
+	if list["total"] != float64(1) {
+		t.Fatalf("list=%v", list)
+	}
+	patched := a.json(a.do("session=c", http.MethodPatch, "/api/tickets/1", `{"status":"closed"}`), http.StatusOK)
+	if patched["createdBy"].(map[string]any)["id"] != "user-a" || patched["updatedBy"].(map[string]any)["id"] != "user-c" {
+		t.Fatalf("patched=%v", patched)
+	}
+	a.json(a.do("session=c", http.MethodPost, "/api/tickets/1/comments", `{"body":"by c"}`), http.StatusCreated)
+	if res := a.do("session=a", http.MethodPut, "/api/tickets/1/comments/1", `{"body":"x"}`); res.Code != http.StatusForbidden || errorCode(t, res) != "comment_forbidden" {
+		t.Fatalf("other member's comment: %d %s", res.Code, res.Body.String())
+	}
+
+	a.json(a.do("session=v", http.MethodGet, "/api/tickets/1", ""), http.StatusOK)
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodPost, "/api/tickets", `{"title":"x"}`},
+		{http.MethodPut, "/api/tickets/1", `{"title":"x","status":"open"}`},
+		{http.MethodPatch, "/api/tickets/1", `{"title":"x"}`},
+		{http.MethodDelete, "/api/tickets/1", ""},
+		{http.MethodPost, "/api/tickets/1/comments", `{"body":"x"}`},
+	} {
+		if res := a.do("session=v", tc.method, tc.path, tc.body); res.Code != http.StatusForbidden || errorCode(t, res) != "organization_write_forbidden" {
+			t.Errorf("viewer %s %s: status=%d body=%s", tc.method, tc.path, res.Code, res.Body.String())
+		}
+	}
 }
 
 func TestTicketsErrorClassification(t *testing.T) {
@@ -189,12 +256,19 @@ func TestTicketsErrorClassification(t *testing.T) {
 		{"non numeric ticket", http.MethodGet, "/api/tickets/abc", "", 404, "ticket_not_found"},
 		{"missing comment", http.MethodPut, "/api/tickets/1/comments/9", `{"body":"x"}`, 404, "comment_not_found"},
 		{"no cookie", http.MethodGet, "/api/tickets", "", 401, "unauthenticated"},
+		{"no organization", http.MethodGet, "/api/tickets", "", 400, "organization_required"},
+		{"invalid organization", http.MethodGet, "/api/tickets", "", 400, "invalid_organization_id"},
 	} {
-		cookie := "session=a"
-		if tc.name == "no cookie" {
+		cookie, organizationID := "session=a", componentOrganizationID.String()
+		switch tc.name {
+		case "no cookie":
 			cookie = ""
+		case "no organization":
+			organizationID = ""
+		case "invalid organization":
+			organizationID = "not-a-uuid"
 		}
-		res := a.do(cookie, tc.method, tc.path, tc.body)
+		res := a.doIn(organizationID, cookie, tc.method, tc.path, tc.body)
 		if res.Code != tc.status || errorCode(t, res) != tc.code {
 			t.Errorf("%s: status=%d body=%s, want %d %s", tc.name, res.Code, res.Body.String(), tc.status, tc.code)
 		}

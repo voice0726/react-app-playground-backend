@@ -143,7 +143,9 @@ func prepareOrganizationRollback(t *testing.T) (*sql.DB, string, string) {
 	t.Helper()
 	db := openDB(t)
 	ensureUp(t, db)
-	if _, err := db.Exec(`DELETE FROM tasks; DELETE FROM invoices; DELETE FROM deals; DELETE FROM customers; DELETE FROM organization_members; DELETE FROM organizations`); err != nil {
+	resetBusinessTables(t, db)
+	// 000003 の down SQL を直接流すため、tickets が organizations を参照する 000004 を先に戻す。
+	if err := migrateDB(t, db).Migrate(3); err != nil {
 		t.Fatal(err)
 	}
 	var organizationID string

@@ -34,9 +34,7 @@ func newIntegrationServer(t *testing.T) (*httpserver.Server, *gorm.DB) {
 	t.Helper()
 	db := openDB(t)
 	ensureUp(t, db)
-	if _, err := db.Exec(`DELETE FROM tasks; DELETE FROM invoices; DELETE FROM deals; DELETE FROM customers; DELETE FROM organization_members; DELETE FROM organizations`); err != nil {
-		t.Fatal(err)
-	}
+	resetBusinessTables(t, db)
 	url := os.Getenv("DATABASE_URL")
 	gormDB, err := gorm.Open(postgres.Open(url), &gorm.Config{})
 	if err != nil {

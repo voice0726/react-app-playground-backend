@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func newOperationID() (string, error) {
@@ -27,19 +29,19 @@ func buildStatusHistory(operationID string, before, after Status, actor Actor, c
 	}}
 }
 
-func toHistoryRecords(owner string, ticketID uint64, items []HistoryItem) []historyRecord {
+func toHistoryRecords(organizationID uuid.UUID, ticketID uint64, items []HistoryItem) []historyRecord {
 	var records []historyRecord
 	for _, item := range items {
 		for _, change := range item.Changes {
 			records = append(records, historyRecord{
-				OwnerUserID: owner,
-				TicketID:    ticketID,
-				OperationID: item.OperationID,
-				Field:       string(change.Field),
-				BeforeValue: change.Before,
-				AfterValue:  change.After,
-				ChangedBy:   item.Actor,
-				ChangedAt:   item.ChangedAt.UTC(),
+				OrganizationID: organizationID,
+				TicketID:       ticketID,
+				OperationID:    item.OperationID,
+				Field:          string(change.Field),
+				BeforeValue:    change.Before,
+				AfterValue:     change.After,
+				ChangedBy:      item.Actor,
+				ChangedAt:      item.ChangedAt.UTC(),
 			})
 		}
 	}

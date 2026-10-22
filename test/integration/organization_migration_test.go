@@ -14,10 +14,8 @@ func TestOrganizationMigrationPreservesLegacyDataAndBlocksUnsafeRollback(t *test
 	db := openDB(t)
 	m := migrateDB(t, db)
 	ensureUp(t, db)
-	if _, err := db.Exec(`DELETE FROM tasks; DELETE FROM invoices; DELETE FROM deals; DELETE FROM customers; DELETE FROM organization_members; DELETE FROM organizations`); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Steps(-1); err != nil {
+	resetBusinessTables(t, db)
+	if err := m.Migrate(2); err != nil {
 		t.Fatal(err)
 	}
 
@@ -69,7 +67,7 @@ func TestOrganizationMigrationPreservesLegacyDataAndBlocksUnsafeRollback(t *test
 	if _, err := db.Exec(`INSERT INTO organization_members (organization_id, user_id, role, created_at, updated_at) VALUES ($1,'new-user','admin',now(),now())`, newOrganizationID); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Steps(-1); err == nil {
+	if err := m.Migrate(2); err == nil {
 		t.Fatal("rollback of a newly-created organization unexpectedly succeeded")
 	}
 	version, dirty, err := m.Version()
@@ -99,9 +97,7 @@ func TestOrganizationMigrationPreservesLegacyDataAndBlocksUnsafeRollback(t *test
 	if err := m.Force(3); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`DELETE FROM tasks; DELETE FROM invoices; DELETE FROM deals; DELETE FROM customers; DELETE FROM organization_members; DELETE FROM organizations`); err != nil {
-		t.Fatal(err)
-	}
+	resetBusinessTables(t, db)
 	if err := m.Steps(-1); err != nil {
 		t.Fatal(err)
 	}

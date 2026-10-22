@@ -1,6 +1,6 @@
 # react-app-playground-backend
 
-React app playground の customers、deals、invoices、tasks、tickets API を提供する Go backend です。customers、deals、invoices、tasks は組織単位で共有され、組織メンバーの admin / editor / viewer 権限で操作を制御します。tickets は auth-gateway の `user_id` 単位で分離されます。認証済みユーザーの識別には auth-gateway の `user_id` を使い、スキーマは `migrations/` の SQL が正です。
+React app playground の customers、deals、invoices、tasks、tickets API を提供する Go backend です。各業務データは組織単位で共有され、組織メンバーの admin / editor / viewer 権限で操作を制御します。認証済みユーザーの識別には auth-gateway の `user_id` を使い、スキーマは `migrations/` の SQL が正です。
 
 ## 開発
 
@@ -35,7 +35,7 @@ Migration は `make migrate-up`、`make migrate-down`（直前の1件のみ）�
 
 組織スコープが必要な endpoint には `X-Organization-ID`（UUID）を指定します。customers / deals / invoices / tickets の一覧は `page` と `pageSize` を指定した場合に `{items,total,page,pageSize}` 形式で返ります。customers / deals / invoices は `q`、`sort`、`order`、各リソースの status、`customerId` でも絞り込め、パラメータを指定しない場合は既存の配列形式を維持します。`GET /api/invoices/summary` と `GET /api/dashboard` は選択組織だけを集計します。projects API、OpenAPI、Kubernetes 配置は含みません。
 
-`migrations/000003_organizations` は既存の `owner_user_id` ごとに個別組織と admin メンバーを作成し、既存レコードを保持したまま組織スコープへ移行します。down migration は共有メンバー、新規組織、所有者情報を復元できない組織が存在する場合に失敗し、共有データを黙って削除しません。旧来の単独所有組織へ安全に戻せる場合だけ rollback できます。
+`migrations/000003_organizations` は既存の `owner_user_id` ごとに個別組織と admin メンバーを作成し、既存レコードを保持したまま組織スコープへ移行します。`migrations/000004_tickets_organizations` は tickets を同じ個別組織へ移し、tickets だけを持つ利用者にはその組織と admin メンバーを作成します。down migration は共有メンバー、新規組織、所有者情報を復元できない組織が存在する場合に失敗し、共有データを黙って削除しません。旧来の単独所有組織へ安全に戻せる場合だけ rollback できます。
 
 ## アプリ別の認証接続
 
