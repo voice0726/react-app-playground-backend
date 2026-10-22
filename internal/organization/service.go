@@ -3,6 +3,7 @@ package organization
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/voice0726/react-app-playground-backend/internal/shared/httperror"
@@ -47,7 +48,7 @@ func (s *Service) UpdateMemberRole(ctx context.Context, actorID string, organiza
 }
 
 func (s *Service) RemoveMember(ctx context.Context, actorID string, organizationID uuid.UUID, userID string) error {
-	if strings.TrimSpace(userID) == "" || len(userID) > maxMemberUserID {
+	if strings.TrimSpace(userID) == "" || utf8.RuneCountInString(userID) > maxMemberUserID {
 		return httperror.New(httperror.Validation, "member_validation", "Invalid organization member.", nil)
 	}
 	return s.repo.RemoveMember(ctx, actorID, organizationID, userID)
