@@ -146,6 +146,9 @@ func (f *invoiceFake) UpdateLocked(ctx context.Context, organizationID, id uuid.
 	}
 	return v, e
 }
+func (f *invoiceFake) UpdateStatuses(context.Context, uuid.UUID, []uuid.UUID, string, string) ([]invoice.Invoice, error) {
+	return nil, nil
+}
 func (f *invoiceFake) Summary(_ context.Context, organizationID uuid.UUID, _ time.Time, _ *uuid.UUID) (invoice.Summary, error) {
 	var summary invoice.Summary
 	for _, value := range f.values {

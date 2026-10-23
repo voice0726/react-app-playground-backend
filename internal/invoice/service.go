@@ -74,6 +74,14 @@ func (s *Service) Update(c context.Context, scope orgcontext.Scope, id uuid.UUID
 	})
 }
 
+func (s *Service) UpdateStatuses(c context.Context, scope orgcontext.Scope, r BulkStatusRequest) ([]Invoice, error) {
+	ids, e := r.Parse()
+	if e != nil {
+		return nil, httperror.New(httperror.Validation, "invoice_bulk_status_validation", "Invalid bulk status request.", e)
+	}
+	return s.repo.UpdateStatuses(c, scope.OrganizationID, ids, r.From, r.To)
+}
+
 func (s *Service) Summary(c context.Context, scope orgcontext.Scope, today time.Time, customerID *uuid.UUID) (Summary, error) {
 	return s.repo.Summary(c, scope.OrganizationID, today, customerID)
 }

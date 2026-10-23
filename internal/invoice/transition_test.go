@@ -46,6 +46,10 @@ func (r *dateValidationRepository) UpdateLocked(_ context.Context, _ uuid.UUID, 
 	r.updates++
 	return next, nil
 }
+func (r *dateValidationRepository) UpdateStatuses(context.Context, uuid.UUID, []uuid.UUID, string, string) ([]Invoice, error) {
+	r.updates++
+	return nil, nil
+}
 func (r *dateValidationRepository) Summary(context.Context, uuid.UUID, time.Time, *uuid.UUID) (Summary, error) {
 	return Summary{}, nil
 }

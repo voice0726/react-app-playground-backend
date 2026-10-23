@@ -120,7 +120,11 @@ func errorHandler(c *echo.Context, err error) {
 
 	var domainErr *httperror.Error
 	if errors.As(err, &domainErr) {
-		_ = c.JSON(statusForKind(domainErr.Kind), map[string]interface{}{"error": map[string]string{"code": domainErr.Code, "message": domainErr.Message}})
+		body := map[string]interface{}{"code": domainErr.Code, "message": domainErr.Message}
+		if domainErr.Details != nil {
+			body["details"] = domainErr.Details
+		}
+		_ = c.JSON(statusForKind(domainErr.Kind), map[string]interface{}{"error": body})
 		return
 	}
 
