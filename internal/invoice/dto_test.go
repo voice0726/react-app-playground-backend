@@ -11,6 +11,10 @@ import (
 
 func TestBulkStatusRequestParse(t *testing.T) {
 	id := uuid.NewString()
+	maxIDs := make([]string, MaxBulkStatusIDs)
+	for index := range maxIDs {
+		maxIDs[index] = uuid.NewString()
+	}
 	tooMany := make([]string, MaxBulkStatusIDs+1)
 	for index := range tooMany {
 		tooMany[index] = uuid.NewString()
@@ -26,6 +30,7 @@ func TestBulkStatusRequestParse(t *testing.T) {
 		{name: "cancel", request: BulkStatusRequest{IDs: []string{id}, From: "sent", To: "cancelled"}},
 		{name: "same status", request: BulkStatusRequest{IDs: []string{id}, From: "sent", To: "sent"}},
 		{name: "empty ids", request: BulkStatusRequest{IDs: []string{}, From: "draft", To: "sent"}},
+		{name: "max ids", request: BulkStatusRequest{IDs: maxIDs, From: "draft", To: "sent"}, valid: true},
 		{name: "too many ids", request: BulkStatusRequest{IDs: tooMany, From: "draft", To: "sent"}},
 		{name: "invalid id", request: BulkStatusRequest{IDs: []string{"not-a-uuid"}, From: "draft", To: "sent"}},
 		{name: "duplicate id", request: BulkStatusRequest{IDs: []string{id, id}, From: "draft", To: "sent"}},
