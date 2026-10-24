@@ -234,6 +234,102 @@ func TestOrganizationPagingTotalsAndSummary(t *testing.T) {
 	}
 }
 
+func TestInvoiceBulkStatusIsAllOrNothing(t *testing.T) {
+	server, _ := newIntegrationServer(t)
+	created := integrationRequest(t, server, http.MethodPost, "/api/organizations", "user-a", nil, `{"name":"Bulk"}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create organization status=%d body=%s", created.Code, created.Body.String())
+	}
+	_, organizationID := mustOrganization(t, created)
+	customerResponse := integrationRequest(t, server, http.MethodPost, "/api/customers", "user-a", &organizationID, `{"name":"Bulk customer","email":"bulk@example.com","phone":"1","status":"active"}`)
+	var customerValue customer.Response
+	if customerResponse.Code != http.StatusCreated || json.Unmarshal(customerResponse.Body.Bytes(), &customerValue) != nil {
+		t.Fatalf("create customer status=%d body=%s", customerResponse.Code, customerResponse.Body.String())
+	}
+	createInvoice := func(organizationID uuid.UUID, number, status string) string {
+		t.Helper()
+		response := integrationRequest(t, server, http.MethodPost, "/api/invoices", "user-a", &organizationID, `{"number":"`+number+`","customerId":"`+customerValue.ID+`","amount":100,"issueDate":"2026-01-01","dueDate":"2026-02-01","status":"`+status+`"}`)
+		var value invoice.Response
+		if response.Code != http.StatusCreated || json.Unmarshal(response.Body.Bytes(), &value) != nil {
+			t.Fatalf("create invoice %s status=%d body=%s", number, response.Code, response.Body.String())
+		}
+		return value.ID
+	}
+	statusOf := func(id string) string {
+		t.Helper()
+		response := integrationRequest(t, server, http.MethodGet, "/api/invoices/"+id, "user-a", &organizationID, "")
+		var value invoice.Response
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &value) != nil {
+			t.Fatalf("find invoice status=%d body=%s", response.Code, response.Body.String())
+		}
+		return value.Status
+	}
+	type errorBody struct {
+		Error struct {
+			Code    string `json:"code"`
+			Details struct {
+				InvoiceIDs []string `json:"invoiceIds"`
+			} `json:"details"`
+		} `json:"error"`
+	}
+	draftA := createInvoice(organizationID, "BULK-A", "draft")
+	draftB := createInvoice(organizationID, "BULK-B", "draft")
+	sentC := createInvoice(organizationID, "BULK-C", "sent")
+	bulk := func(user, body string) *httptest.ResponseRecorder {
+		return integrationRequest(t, server, http.MethodPost, "/api/invoices/bulk-status", user, &organizationID, body)
+	}
+
+	conflict := bulk("user-a", `{"ids":["`+draftA+`","`+sentC+`"],"from":"draft","to":"sent"}`)
+	var conflictBody errorBody
+	if conflict.Code != http.StatusConflict || json.Unmarshal(conflict.Body.Bytes(), &conflictBody) != nil || conflictBody.Error.Code != "invoice_status_conflict" || len(conflictBody.Error.Details.InvoiceIDs) != 1 || conflictBody.Error.Details.InvoiceIDs[0] != sentC {
+		t.Fatalf("conflict status=%d body=%s", conflict.Code, conflict.Body.String())
+	}
+	if got := statusOf(draftA); got != "draft" {
+		t.Fatalf("draftA after conflict=%q, want draft", got)
+	}
+
+	privateResponse := integrationRequest(t, server, http.MethodPost, "/api/organizations", "user-a", nil, `{"name":"Other"}`)
+	_, otherID := mustOrganization(t, privateResponse)
+	otherCustomer := integrationRequest(t, server, http.MethodPost, "/api/customers", "user-a", &otherID, `{"name":"Other customer","email":"other@example.com","phone":"1","status":"active"}`)
+	if otherCustomer.Code != http.StatusCreated || json.Unmarshal(otherCustomer.Body.Bytes(), &customerValue) != nil {
+		t.Fatalf("create other customer status=%d body=%s", otherCustomer.Code, otherCustomer.Body.String())
+	}
+	otherInvoice := createInvoice(otherID, "OTHER-A", "draft")
+	notFound := bulk("user-a", `{"ids":["`+draftA+`","`+otherInvoice+`"],"from":"draft","to":"sent"}`)
+	var notFoundBody errorBody
+	if notFound.Code != http.StatusNotFound || json.Unmarshal(notFound.Body.Bytes(), &notFoundBody) != nil || len(notFoundBody.Error.Details.InvoiceIDs) != 1 || notFoundBody.Error.Details.InvoiceIDs[0] != otherInvoice {
+		t.Fatalf("cross-organization status=%d body=%s", notFound.Code, notFound.Body.String())
+	}
+	if got := statusOf(draftA); got != "draft" {
+		t.Fatalf("draftA after not found=%q, want draft", got)
+	}
+
+	if response := bulk("user-a", `{"ids":["`+draftA+`"],"from":"draft","to":"paid"}`); response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid transition status=%d body=%s", response.Code, response.Body.String())
+	}
+	memberPath := "/api/organizations/" + organizationID.String() + "/members"
+	if response := integrationRequest(t, server, http.MethodPost, memberPath, "user-a", &organizationID, `{"userId":"user-b","role":"viewer"}`); response.Code != http.StatusCreated {
+		t.Fatalf("add viewer status=%d body=%s", response.Code, response.Body.String())
+	}
+	if response := bulk("user-b", `{"ids":["`+draftA+`"],"from":"draft","to":"sent"}`); response.Code != http.StatusForbidden {
+		t.Fatalf("viewer bulk status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	succeeded := bulk("user-a", `{"ids":["`+draftB+`","`+draftA+`"],"from":"draft","to":"sent"}`)
+	var items struct {
+		Items []invoice.Response `json:"items"`
+	}
+	if succeeded.Code != http.StatusOK || json.Unmarshal(succeeded.Body.Bytes(), &items) != nil || len(items.Items) != 2 || items.Items[0].ID != draftB || items.Items[0].Status != "sent" {
+		t.Fatalf("bulk status=%d body=%s", succeeded.Code, succeeded.Body.String())
+	}
+	if statusOf(draftA) != "sent" || statusOf(draftB) != "sent" {
+		t.Fatal("bulk update did not persist")
+	}
+	if response := bulk("user-a", `{"ids":["`+draftA+`"],"from":"draft","to":"sent"}`); response.Code != http.StatusConflict {
+		t.Fatalf("stale bulk status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestDealCustomerSortAcrossPages(t *testing.T) {
 	server, _ := newIntegrationServer(t)
 	created := integrationRequest(t, server, http.MethodPost, "/api/organizations", "user-a", nil, `{"name":"Customer sort"}`)

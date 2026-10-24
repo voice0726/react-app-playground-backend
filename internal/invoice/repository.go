@@ -28,5 +28,6 @@ type Repository interface {
 	Find(context.Context, uuid.UUID, uuid.UUID) (Invoice, error)
 	Create(context.Context, uuid.UUID, string, Invoice) (Invoice, error)
 	UpdateLocked(context.Context, uuid.UUID, uuid.UUID, func(Invoice) (Invoice, error)) (Invoice, error)
+	UpdateStatuses(context.Context, uuid.UUID, []uuid.UUID, string, string) ([]Invoice, error)
 	Summary(context.Context, uuid.UUID, time.Time, *uuid.UUID) (Summary, error)
 }

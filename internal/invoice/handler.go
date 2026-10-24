@@ -117,6 +117,25 @@ func (h *Handler) Update(c *echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, response(v))
 }
+func (h *Handler) UpdateStatuses(c *echo.Context) error {
+	scope, e := h.scope(c)
+	if e != nil {
+		return e
+	}
+	var r BulkStatusRequest
+	if httpjson.Decode(c.Request(), &r) != nil {
+		return httperror.New(httperror.Validation, "invalid_json", "Invalid JSON request.", nil)
+	}
+	v, e := h.s.UpdateStatuses(c.Request().Context(), scope, r)
+	if e != nil {
+		return e
+	}
+	o := make([]Response, 0, len(v))
+	for _, x := range v {
+		o = append(o, response(x))
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"items": o})
+}
 func (h *Handler) Register(g *echo.Group) {
 	h.RegisterScoped(g)
 }
@@ -125,6 +144,7 @@ func (h *Handler) RegisterScoped(g *echo.Group) {
 	g.GET("/invoices/summary", h.Summary)
 	g.GET("/invoices", h.List)
 	g.POST("/invoices", h.Create)
+	g.POST("/invoices/bulk-status", h.UpdateStatuses)
 	g.GET("/invoices/:id", h.Find)
 	g.PATCH("/invoices/:id", h.Update)
 }

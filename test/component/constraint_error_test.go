@@ -46,6 +46,9 @@ func (constraintInvoiceRepository) Create(context.Context, uuid.UUID, string, in
 func (constraintInvoiceRepository) UpdateLocked(context.Context, uuid.UUID, uuid.UUID, func(invoice.Invoice) (invoice.Invoice, error)) (invoice.Invoice, error) {
 	return invoice.Invoice{}, nil
 }
+func (constraintInvoiceRepository) UpdateStatuses(context.Context, uuid.UUID, []uuid.UUID, string, string) ([]invoice.Invoice, error) {
+	return nil, nil
+}
 func (constraintInvoiceRepository) Summary(context.Context, uuid.UUID, time.Time, *uuid.UUID) (invoice.Summary, error) {
 	return invoice.Summary{}, nil
 }
