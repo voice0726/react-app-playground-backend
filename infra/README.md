@@ -208,7 +208,7 @@ provider の取得にはネットワークが必要です。
 DB VM とそのバックアップの扱いは、shared-infra の README にあります。
 API と Job には削除保護を設定しています。
 
-DB 接続は peering 経由の内部 IP で `sslmode=disable` を使います。
+DB 接続は peering 経由の内部 IP で `sslmode=require` を使います。共有 DB は TLS の接続だけを受け付けます。
 DATABASE_URL の Secret のバージョンは固定です。
 shared-infra で新しいバージョンを作ったら、`shared_database_url_secret_version` を替えて apply します。
 
