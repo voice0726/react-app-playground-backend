@@ -7,29 +7,6 @@ resource "google_service_account" "workload" {
   depends_on = [google_project_service.this]
 }
 
-resource "google_secret_manager_secret" "database_url" {
-  secret_id = "playground-database-url"
-
-  replication {
-    auto {}
-  }
-
-  depends_on = [google_project_service.this]
-}
-
-resource "google_secret_manager_secret_version" "database_url" {
-  secret      = google_secret_manager_secret.database_url.id
-  secret_data = "postgres://playground:${random_password.db.result}@${google_compute_address.db.address}:5432/playground?sslmode=disable"
-}
-
-resource "google_secret_manager_secret_iam_member" "database_url" {
-  for_each = google_service_account.workload
-
-  secret_id = google_secret_manager_secret.database_url.id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = each.value.member
-}
-
 resource "google_secret_manager_secret" "gateway_token" {
   secret_id = "playground-auth-gateway-internal-token"
 
