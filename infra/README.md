@@ -150,6 +150,13 @@ provider の取得にはネットワークが必要です。
    terraform -chdir=infra apply bootstrap.tfplan
    ```
 
+   続けて shared-infra の `production.tfvars` の `apps` に、このアプリを登録して apply します。
+   `network` と `client_cidr` には、この VPC と Cloud Run 用サブネットを指定します。
+   `database_url_readers` には、`playground-api` と `playground-migrate` の service account を指定します。
+   この 2 つは、上の apply で作った service account です。
+   shared-infra の apply で、逆向きの peering と DATABASE_URL の読み取り権限ができます。
+   shared-infra の `terraform output peering_states` が `ACTIVE` になってから、手順 4 の apply に進みます。
+
 3. gateway のアプリ設定と一致する内部トークンを登録します。
    アプリ ID は `react-app-playground` です。
    内部トークンの値は Terraform に渡しません。
