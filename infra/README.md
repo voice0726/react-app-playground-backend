@@ -1,8 +1,24 @@
 # GCP デプロイ準備
 
 専用プロジェクト `react-app-playground-backend` の基盤を管理します。
-PJ の 2026-10-09 の最終決定に合わせ、DB VM を専用にします。
-gateway の DB は共有しません。VPC peering も作りません。
+DB は専用の DB VM から、shared-infra リポジトリの共有 DB VM へ移行中です。
+共有 DB へは VPC peering で接続します。
+移行が終わるまで、以下の専用 DB VM の構成は残します。
+
+## 共有 DB への移行
+
+手順の全体は shared-infra の README の「移行手順」にあります。
+このリポジトリでは、`production.tfvars` に次の 3 つを設定して apply します。
+
+| 変数 | 値の取得元（shared-infra の output） |
+| --- | --- |
+| `shared_db_network` | `db_network` |
+| `shared_database_url_secret` | `database_url_secrets` の `react-app-playground-backend` |
+| `shared_database_url_secret_version` | `database_url_secret_versions` の `react-app-playground-backend` |
+
+`shared_db_network` だけを設定すると、peering だけを作ります。
+`shared_database_url_secret` を設定すると、API と migrate Job の DATABASE_URL が共有 DB に替わります。
+2 段階に分けて apply し、peering の疎通を確かめてから接続先を替えます。
 
 参考は auth-gateway の [#6 Terraform による GCP 基盤管理](https://github.com/voice0726/auth-gateway/pull/6) です。
 準備段階では `init -backend=false` と `validate` まで実行します。
