@@ -94,3 +94,36 @@ variable "max_instances" {
     error_message = "max_instances は 1 以上の整数にしてください。"
   }
 }
+
+variable "shared_db_network" {
+  description = "shared-infra の DB 用 VPC（projects/<id>/global/networks/<name>）。null なら peering を作りません"
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.shared_db_network == null || can(regex("^projects/[a-z][a-z0-9-]+/global/networks/[a-z][a-z0-9-]*$", var.shared_db_network))
+    error_message = "shared_db_network は projects/<id>/global/networks/<name> の形式にしてください。"
+  }
+}
+
+variable "shared_database_url_secret" {
+  description = "shared-infra の DATABASE_URL の Secret（projects/<番号>/secrets/<ID>）。null なら専用 DB VM の Secret を使います"
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.shared_database_url_secret == null || can(regex("^projects/[0-9]+/secrets/[A-Za-z0-9_-]+$", var.shared_database_url_secret))
+    error_message = "shared_database_url_secret は projects/<番号>/secrets/<ID> の形式にしてください。"
+  }
+}
+
+variable "shared_database_url_secret_version" {
+  description = "shared_database_url_secret のバージョン番号"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.shared_database_url_secret == null || can(regex("^[1-9][0-9]*$", var.shared_database_url_secret_version))
+    error_message = "shared_database_url_secret を指定したときはバージョン番号も必要です。"
+  }
+}

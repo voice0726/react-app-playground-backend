@@ -9,6 +9,12 @@ locals {
     LOG_LEVEL            = "info"
     LOG_FORMAT           = "json"
   }
+
+  use_shared_db = var.shared_database_url_secret != null
+  database_url = {
+    secret  = local.use_shared_db ? var.shared_database_url_secret : google_secret_manager_secret.database_url.secret_id
+    version = local.use_shared_db ? var.shared_database_url_secret_version : google_secret_manager_secret_version.database_url.version
+  }
 }
 
 resource "google_cloud_run_v2_service" "api" {
@@ -47,8 +53,8 @@ resource "google_cloud_run_v2_service" "api" {
         name = "DATABASE_URL"
         value_source {
           secret_key_ref {
-            secret  = google_secret_manager_secret.database_url.secret_id
-            version = google_secret_manager_secret_version.database_url.version
+            secret  = local.database_url.secret
+            version = local.database_url.version
           }
         }
       }
@@ -131,8 +137,8 @@ resource "google_cloud_run_v2_job" "migrate" {
           name = "DATABASE_URL"
           value_source {
             secret_key_ref {
-              secret  = google_secret_manager_secret.database_url.secret_id
-              version = google_secret_manager_secret_version.database_url.version
+              secret  = local.database_url.secret
+              version = local.database_url.version
             }
           }
         }
