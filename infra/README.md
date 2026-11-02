@@ -1,18 +1,16 @@
 # GCP デプロイ準備
 
 専用プロジェクト `react-app-playground-backend` の基盤を管理します。
-DB は専用の DB VM から、shared-infra リポジトリの共有 DB VM へ移行中です。
+DB は、shared-infra リポジトリが管理する共有 DB VM の `playground` データベースを使います。
 共有 DB へは VPC peering で接続します。
-「構成」以降に書いた専用 DB VM の構成は、移行が終わるまで残します。
 
 参考は auth-gateway の [#6 Terraform による GCP 基盤管理](https://github.com/voice0726/auth-gateway/pull/6) です。
 準備段階では `init -backend=false` と `validate` まで実行します。
 以下のデプロイ手順は、別途デプロイを承認した後に使う手順です。
 
-## 共有 DB への移行
+## 共有 DB への接続
 
-手順の全体は shared-infra の README の「移行手順」にあります。
-このリポジトリでは `production.tfvars` に次の 3 つを設定して apply します。
+`production.tfvars` に次の 3 つを設定します。
 
 | 変数 | 値の取得元（shared-infra の output） |
 | --- | --- |
@@ -20,9 +18,9 @@ DB は専用の DB VM から、shared-infra リポジトリの共有 DB VM へ�
 | `shared_database_url_secret` | `database_url_secrets` の `react-app-playground-backend` |
 | `shared_database_url_secret_version` | `database_url_secret_versions` の `react-app-playground-backend` |
 
-`shared_db_network` だけを設定すると、peering だけを作ります。
-`shared_database_url_secret` を設定すると、API と migrate Job の DATABASE_URL の接続先が共有 DB に替わります。
-2 段階に分けて apply し、peering の疎通を確かめてから接続先を替えます。
+`shared_db_network` を設定すると、共有 DB の VPC との peering を作ります。
+peering は、shared-infra 側も逆向きの peering を作ったときに `ACTIVE` になります。
+API と migrate Job は、`shared_database_url_secret` の Secret から DATABASE_URL を読みます。
 
 ## 構成
 
@@ -36,10 +34,12 @@ Cloud Run API -------- HTTPS --------> auth-gateway /internal/session
   v
 Dedicated VPC
   +-- Cloud Run subnet: 10.31.0.0/26
-  |     +-- API
-  |     +-- migrate Job (/app/migrate up)
-  +-- DB subnet: 10.30.0.0/24
-        +-- e2-micro VM / PostgreSQL 15 / 30 GB pd-standard
+        +-- API
+        +-- migrate Job (/app/migrate up)
+  |
+  | VPC peering
+  v
+shared-infra の共有 DB VM (PostgreSQL 15, DB 名 playground)
 
 GitHub deploy.yml (main) -- WIF --> deploy service account
   +-- Artifact Registry push
@@ -48,25 +48,23 @@ GitHub deploy.yml (main) -- WIF --> deploy service account
 
 | 対象 | 設定 |
 | --- | --- |
-| 配置 | `us-central1`、DB VM は `us-central1-a` |
+| 配置 | `us-central1` |
 | VPC | 自動サブネットなし、アプリ専用 |
-| DB 接続 | 内部 IP の 5432、Cloud Run 専用サブネットから許可 |
+| DB 接続 | 共有 DB の内部 IP の 5432。peering 経由で、Cloud Run 専用サブネットから許可 |
 | DB 認証 | `playground` ロール、SCRAM、DB 名 `playground` |
-| SSH | IAP の `35.235.240.0/20` のみ |
-| DB VM 外部 IP | apt と Google API への接続用。DB の外部接続は許可しません |
 | API | 公開 ingress、IAM invoker 検査無効、アプリ側で認証 |
 | API スケール | 最小 0、最大 2 |
 | migrate Job | 1 タスク、並列数 1、再試行 0、制限時間 600 秒 |
-| Secret Manager | DB パスワード、DATABASE_URL、gateway 内部トークン |
+| Secret Manager | gateway 内部トークン。DATABASE_URL は shared-infra の Secret を参照 |
 | WIF | 当該リポジトリの main の `.github/workflows/deploy.yml` のみ |
 
 WIF は repository ID `1410098688` と owner ID `42563149` も要求します。
 リポジトリ名だけを再利用しても、信頼条件は一致しません。
 
-API、migrate Job、DB VM は別々の service account を使います。
-API と Job は DATABASE_URL を読めます。
+API と migrate Job は別々の service account を使います。
+API と Job は shared-infra の DATABASE_URL を読めます。
+この権限は shared-infra の `database_url_readers` で付けます。
 gateway 内部トークンは API だけが読めます。
-DB VM は DB パスワードだけを読めます。
 deploy service account は Secret の値を読む権限を持ちません。
 
 ## auth-gateway と揃えた設定
@@ -143,19 +141,21 @@ provider の取得にはネットワークが必要です。
    ```
 
 2. `deploy_workloads=false` のまま基盤を作ります。
-   DB VM、Secret、Artifact Registry、WIF が対象です。
+   VPC、共有 DB との peering、Secret、Artifact Registry、WIF が対象です。
    API と Job はまだ作りません。
+   `<db_network>` は shared-infra の `terraform output -raw db_network` です。
 
    ```sh
-   terraform -chdir=infra plan -out=bootstrap.tfplan
+   terraform -chdir=infra plan -var=shared_db_network=<db_network> -out=bootstrap.tfplan
    terraform -chdir=infra apply bootstrap.tfplan
    ```
 
-   DB パスワードは Terraform が生成します。
-   起動スクリプトは Secret Manager からパスワードを取得します。
-   VM 作成の完了は PostgreSQL の起動完了を意味しません。
-   IAP 経由で起動ログと DB の起動を確認してください。
-   接続する人には IAP と Compute の権限が別途必要です。
+   続けて shared-infra の `production.tfvars` の `apps` に、このアプリを登録して apply します。
+   `network` と `client_cidr` には、この VPC と Cloud Run 用サブネットを指定します。
+   `database_url_readers` には、`playground-api` と `playground-migrate` の service account を指定します。
+   この 2 つは、上の apply で作った service account です。
+   shared-infra の apply で、逆向きの peering と DATABASE_URL の読み取り権限ができます。
+   shared-infra の `terraform output peering_states` が `ACTIVE` になってから、手順 4 の apply に進みます。
 
 3. gateway のアプリ設定と一致する内部トークンを登録します。
    アプリ ID は `react-app-playground` です。
@@ -183,7 +183,7 @@ provider の取得にはネットワークが必要です。
 
    Artifact Registry の認証と push は別途実行します。
    `production.tfvars.example` を `production.tfvars` にコピーします。
-   image、origin 2 件、内部トークンのバージョン番号を設定します。
+   image、origin 2 件、内部トークンのバージョン番号、共有 DB の 3 変数を設定します。
    サンプルの仮値はそのまま使わないでください。
 
    ```sh
@@ -205,20 +205,12 @@ provider の取得にはネットワークが必要です。
 
 ## 運用前の制約
 
-DB は検証用の単一 VM です。バックアップは構成に含めていません。
-VM の置換・削除は `prevent_destroy` で止めます。
-API と Job にも削除保護を設定しています。
-DB ディスク単独のバックアップや復旧手順は別途必要です。
+DB VM とそのバックアップの扱いは、shared-infra の README にあります。
+API と Job には削除保護を設定しています。
 
-e2-micro の Free Tier は複数プロジェクトの VM 台数分を保証しません。
-移行中の複数 VM、外部 IPv4、通信量などは課金対象になり得ます。
-実際の費用と割り当ては本作業では確認していません。
-
-DB 接続は専用 VPC 内で `sslmode=disable` を使います。
-パスワードと DATABASE_URL は Terraform state に含まれます。
-state バケットのアクセス権限を絞って管理してください。
-パスワード更新時は DB と Secret の値を同期させる必要があります。
-既存 API の Secret バージョンは自動更新されません。
+DB 接続は peering 経由の内部 IP で `sslmode=disable` を使います。
+DATABASE_URL の Secret のバージョンは固定です。
+shared-infra で新しいバージョンを作ったら、`shared_database_url_secret_version` を替えて apply します。
 
 イメージの更新は auth-gateway と同じく CI が管理します。
 Terraform の `image` はワークロード作成時に使います。

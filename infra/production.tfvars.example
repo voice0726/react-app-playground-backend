@@ -4,7 +4,7 @@ auth_gateway_url = "https://REPLACE_WITH_GATEWAY_HOST"
 public_origin = "https://REPLACE_WITH_FRONTEND_HOST"
 auth_gateway_token_version = "1"
 
-# 共有 DB へ移行するときに設定します。値は shared-infra の terraform output から取ります
-# shared_db_network = "projects/REPLACE_WITH_SHARED_PROJECT/global/networks/shared-db"
-# shared_database_url_secret = "projects/REPLACE_WITH_PROJECT_NUMBER/secrets/react-app-playground-backend-database-url"
-# shared_database_url_secret_version = "1"
+# 共有 DB の値は shared-infra の terraform output から取ります
+shared_db_network = "projects/REPLACE_WITH_SHARED_PROJECT/global/networks/shared-db"
+shared_database_url_secret = "projects/REPLACE_WITH_PROJECT_NUMBER/secrets/react-app-playground-backend-database-url"
+shared_database_url_secret_version = "1"

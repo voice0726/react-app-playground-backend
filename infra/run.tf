@@ -9,12 +9,6 @@ locals {
     LOG_LEVEL            = "info"
     LOG_FORMAT           = "json"
   }
-
-  use_shared_db = var.shared_database_url_secret != null
-  database_url = {
-    secret  = local.use_shared_db ? var.shared_database_url_secret : google_secret_manager_secret.database_url.secret_id
-    version = local.use_shared_db ? var.shared_database_url_secret_version : google_secret_manager_secret_version.database_url.version
-  }
 }
 
 resource "google_cloud_run_v2_service" "api" {
@@ -53,8 +47,8 @@ resource "google_cloud_run_v2_service" "api" {
         name = "DATABASE_URL"
         value_source {
           secret_key_ref {
-            secret  = local.database_url.secret
-            version = local.database_url.version
+            secret  = var.shared_database_url_secret
+            version = var.shared_database_url_secret_version
           }
         }
       }
@@ -101,11 +95,7 @@ resource "google_cloud_run_v2_service" "api" {
     ignore_changes = [template[0].containers[0].image, client, client_version]
   }
 
-  depends_on = [
-    google_compute_instance.db,
-    google_secret_manager_secret_iam_member.database_url,
-    google_secret_manager_secret_iam_member.gateway_token,
-  ]
+  depends_on = [google_secret_manager_secret_iam_member.gateway_token]
 }
 
 resource "google_cloud_run_v2_job" "migrate" {
@@ -137,8 +127,8 @@ resource "google_cloud_run_v2_job" "migrate" {
           name = "DATABASE_URL"
           value_source {
             secret_key_ref {
-              secret  = local.database_url.secret
-              version = local.database_url.version
+              secret  = var.shared_database_url_secret
+              version = var.shared_database_url_secret_version
             }
           }
         }
@@ -157,9 +147,4 @@ resource "google_cloud_run_v2_job" "migrate" {
   lifecycle {
     ignore_changes = [template[0].template[0].containers[0].image, client, client_version]
   }
-
-  depends_on = [
-    google_compute_instance.db,
-    google_secret_manager_secret_iam_member.database_url,
-  ]
 }
