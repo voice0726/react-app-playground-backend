@@ -1,6 +1,6 @@
 variable "project_id" {
   type    = string
-  default = "react-app-playground-backend"
+  default = "react-app-playground-be"
 }
 
 variable "region" {

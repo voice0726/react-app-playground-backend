@@ -1,6 +1,6 @@
 # GCP デプロイ準備
 
-専用プロジェクト `react-app-playground-backend` の基盤を管理します。
+専用プロジェクト `react-app-playground-be` の基盤を管理します。
 DB は、shared-infra リポジトリが管理する共有 DB VM の `playground` データベースを使います。
 共有 DB へは VPC peering で接続します。
 
@@ -82,8 +82,7 @@ Artifact Registry のリソース定義は既に同じ形式です。
 
 Go は go.mod が要求する 1.27.0 を使います。
 gateway の 1.25.5 には下げず、bookworm の指定だけ揃えました。
-Artifact Registry は新規のため `us-central1` に置きます。
-gateway の `asia-northeast1` は既存 Registry の維持が理由です。
+Artifact Registry は gateway と同じく `us-central1` に置きます。
 
 API は既存の 8080 番と環境変数による設定を維持します。
 gateway の 8800 番や YAML ファイル読込は採用しません。
@@ -133,10 +132,10 @@ provider の取得にはネットワークが必要です。
    `versions.tf` のバケット名とプロジェクトを合わせます。
 
    ```sh
-   gcloud storage buckets create gs://react-app-playground-backend-tfstate \
-     --project react-app-playground-backend --location us-central1 \
+   gcloud storage buckets create gs://react-app-playground-be-tfstate \
+     --project react-app-playground-be --location us-central1 \
      --uniform-bucket-level-access --public-access-prevention
-   gcloud storage buckets update gs://react-app-playground-backend-tfstate --versioning
+   gcloud storage buckets update gs://react-app-playground-be-tfstate --versioning
    terraform -chdir=infra init -reconfigure
    ```
 
@@ -164,7 +163,7 @@ provider の取得にはネットワークが必要です。
 
    ```sh
    gcloud secrets versions add playground-auth-gateway-internal-token \
-     --project react-app-playground-backend --data-file=/path/to/token-file
+     --project react-app-playground-be --data-file=/path/to/token-file
    ```
 
    トークンファイルには改行を含めないでください。
@@ -178,7 +177,7 @@ provider の取得にはネットワークが必要です。
 
    ```sh
    docker build --platform linux/amd64 \
-     -t us-central1-docker.pkg.dev/react-app-playground-backend/react-app-playground-backend/api:TAG .
+     -t us-central1-docker.pkg.dev/react-app-playground-be/react-app-playground-backend/api:TAG .
    ```
 
    Artifact Registry の認証と push は別途実行します。
@@ -196,7 +195,7 @@ provider の取得にはネットワークが必要です。
 
    ```sh
    gcloud run jobs execute react-app-playground-backend-migrate \
-     --project react-app-playground-backend --region us-central1 --wait
+     --project react-app-playground-be --region us-central1 --wait
    ```
 
    `/readyz` は DB の接続確認だけを行います。
