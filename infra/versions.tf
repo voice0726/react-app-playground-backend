@@ -13,7 +13,7 @@ terraform {
   }
 
   backend "gcs" {
-    bucket = "react-app-playground-backend-tfstate"
+    bucket = "react-app-playground-be-tfstate"
     prefix = "infra"
   }
 }
