@@ -47,4 +47,4 @@ Migration は `make migrate-up`、`make migrate-down`（直前の1件のみ）�
 
 ## GCP デプロイ準備
 
-専用プロジェクト `react-app-playground-backend` の Terraform は [infra/README.md](infra/README.md) にあります。API と migrate Job は同じイメージを使います。Job は `/app/migrate up` を実行します。
+専用プロジェクト `react-app-playground-be` の Terraform は [infra/README.md](infra/README.md) にあります。API と migrate Job は同じイメージを使います。Job は `/app/migrate up` を実行します。
